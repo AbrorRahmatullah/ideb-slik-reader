@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Upload</title>
+    <!-- Bootstrap CSS -->
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+            margin: 0;
+        }
+        .card {
+            width: 100%;
+            max-width: 900px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+            border-radius: 10px;
+        }
+        .card-header {
+            background-color: #007bff;
+            color: white;
+            text-align: center;
+            padding: 1rem;
+            font-size: 1.5rem;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        }
+        .btn-primary, .btn-success, .btn-danger, .btn-info {
+            width: 100%;
+        }
+        .table-container {
+            max-height: 600px;
+            overflow-y: auto;
+            margin-top: 20px;
+            padding: 1rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .alert {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header">
+            Upload a File
+        </div>
+        <div class="card-body">
+            <form action="/upload" method="POST" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="flag" class="form-label">Select a Flag</label>
+                    <select name="flag" class="form-select" required>
+                        <option value="" disabled selected>Select a flag</option>
+                        {% for flag in flags %}
+                        <option value="{{ flag }}">{{ flag }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="file" class="form-label">Select a JSON File</label>
+                    <input type="file" name="file" class="form-control" accept=".txt" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Upload</button>
+            </form>
+
+            {% if table_data %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Header</h5>
+                {{ table_data|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_2 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Debitur</h5>
+                {{ table_data_2|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_3 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Parameter Pencarian</h5>
+                {{ table_data_3|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_4 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Data Pokok Debitur</h5>
+                {{ table_data_4|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_5 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Ringkasan Fasilitas</h5>
+                {{ table_data_5|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_6 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Kredit Pembiayaan</h5>
+                {{ table_data_6|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_7 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas LC</h5>
+                {{ table_data_7|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_8 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Garansi</h5>
+                {{ table_data_8|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_9 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Lainnya</h5>
+                {{ table_data_9|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_10 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Surat Berharga</h5>
+                {{ table_data_10|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_11 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Kelompok Pengurus Pemilik</h5>
+                {{ table_data_11|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_af_1 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Aktif Kredit Pembiayaan</h5>
+                {{ table_data_af_1|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_cf_1 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Lunas Kredit Pembiayaan</h5>
+                {{ table_data_cf_1|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_af_2 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Aktif L/C</h5>
+                {{ table_data_af_2|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_af_3 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Aktif Bank Garansi</h5>
+                {{ table_data_af_3|safe }}
+            </div>
+            {% endif %}
+
+            {% if table_data_af_4 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Aktif Lainnya</h5>
+                {{ table_data_af_4|safe }}
+            </div>
+            {% endif %}
+
+
+            {% if table_data_af_5 %}
+            <div class="table-container mt-4">
+                <h5 class="text-center">Fasilitas Aktif Surat Berharga</h5>
+                {{ table_data_af_5|safe }}
+            </div>
+            {% endif %}
+
+            {% if role_access == 'admin' %}
+                <a href="/register" class="btn btn-info mt-3">Register</a>
+            {% endif %}
+            <a href="/download" class="btn btn-danger mt-3">Download Excel File</a>
+            <a href="/logout" class="btn btn-danger mt-3">Logout</a>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>
