@@ -4,8 +4,9 @@ import json
 import os
 from flask_bcrypt import Bcrypt
 from datetime import timedelta
+from dotenv import load_dotenv
 
-import psycopg2
+import pyodbc
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
@@ -28,13 +29,17 @@ app.permanent_session_lifetime = timedelta(minutes=10)
 # }
 
 # Database connection function
+
+load_dotenv()
+
 def get_db_connection():
-    return psycopg2.connect(
-        dbname=os.getenv("DB_NAME"),  # Load from .env
-        user=os.getenv("DB_USER"),    # Load from .env
-        password=os.getenv("DB_PASSWORD"),  # Load from .env
-        host=os.getenv("DB_HOST"),    # Load from .env
-        port=os.getenv("DB_PORT")     # Load from .env
+    return pyodbc.connect(
+        driver='{ODBC Driver 17 for SQL Server}',  # Use the correct driver
+        server=os.getenv("DB_HOST"),
+        database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        port=os.getenv("DB_PORT")
     )
 
 # Temporary storage for DataFrame
@@ -86,7 +91,7 @@ def register():
         # Check if the username already exists
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
         existing_user = cur.fetchone()
 
         if existing_user:
@@ -94,7 +99,7 @@ def register():
             return render_template('register.html', username=username, role_access=role_access)
         else:
             # Insert new user into the database
-            cur.execute("INSERT INTO users (username, password_hash, role_access, fullname, email, created_date) VALUES (%s, %s, %s, %s, %s, NOW())", (username, password_hash, role_access, fullname, email))
+            cur.execute("INSERT INTO users (username, password_hash, role_access, fullname, email, created_date) VALUES (?, ?, ?, ?, ?, GETDATE())", (username, password_hash, role_access, fullname, email))
             conn.commit()
             flash("User registered successfully.")
             return redirect(url_for('login'))  # Redirect to login page after successful registration
@@ -116,7 +121,7 @@ def login():
         cur = conn.cursor()
 
         # Fetch the hashed password from the database for the given username
-        cur.execute("SELECT password_hash, role_access FROM users WHERE username = %s", (username,))
+        cur.execute("SELECT password_hash, role_access FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
 
         cur.close()
