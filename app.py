@@ -6,7 +6,6 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from config.database import get_db_connection
-from functions.upload import generate_html_tables, parse_uploaded_file, process_data
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
