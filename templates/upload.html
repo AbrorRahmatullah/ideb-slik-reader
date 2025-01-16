@@ -32,7 +32,7 @@
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
         }
-        .btn-primary, .btn-success, .btn-danger, .btn-info {
+        .btn-primary, .btn-success, .btn-danger, .btn-info, .btn-warning {
             width: 100%;
         }
         .table-container {
@@ -194,12 +194,14 @@
             </div>
             {% endif %}
 
+            <a href="/download" class="btn btn-success mt-3">Download Excel File</a>
+            
+        </div>
             {% if role_access == 'admin' %}
                 <a href="/register" class="btn btn-info mt-3">Register</a>
             {% endif %}
-            <a href="/download" class="btn btn-danger mt-3">Download Excel File</a>
+            <a href="/change_password" class="btn btn-warning mt-3">Change Password</a>
             <a href="/logout" class="btn btn-danger mt-3">Logout</a>
-        </div>
     </div>
 
     <!-- Bootstrap JS -->

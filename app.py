@@ -1,12 +1,12 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+import os
 import pandas as pd
 import json
-import os
-from flask_bcrypt import Bcrypt
-from datetime import timedelta
-from dotenv import load_dotenv
 
-import pyodbc
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask_bcrypt import Bcrypt
+from datetime import datetime, timedelta
+from config.database import get_db_connection
+from functions.upload import generate_html_tables, parse_uploaded_file, process_data
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
@@ -29,18 +29,6 @@ app.permanent_session_lifetime = timedelta(minutes=10)
 # }
 
 # Database connection function
-
-load_dotenv()
-
-def get_db_connection():
-    return pyodbc.connect(
-        driver='{ODBC Driver 17 for SQL Server}',  # Use the correct driver
-        server=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        port=os.getenv("DB_PORT")
-    )
 
 # Temporary storage for DataFrame
 uploaded_data = None
@@ -84,7 +72,7 @@ def register():
 
         if password != password_confirm:
             flash("Passwords do not match.")
-            return render_template('register.html', username=username, role_access=role_access)
+            return render_template('register.html', username=username, fullname=fullname, email=email)
         
         password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
 
@@ -137,6 +125,51 @@ def login():
     
     return render_template('login.html')
 
+@app.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    if 'username' not in session:
+        flash("You need to log in first.")
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        current_password = request.form['current_password']
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        username = session['username']
+
+        if new_password != confirm_password:
+            flash("New passwords do not match.")
+            return render_template('change_password.html')
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Fetch the current hashed password from the database
+        cur.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
+        user = cur.fetchone()
+
+        if not user or not bcrypt.check_password_hash(user[0], current_password):
+            flash("Current password is incorrect.")
+            return render_template('change_password.html')
+        else:
+            # Hash the new password and update the database
+            new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
+            cur.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, username))
+            conn.commit()
+            # flash("Password changed successfully.")
+            # return render_template('upload.html')
+            return '''
+                <script>
+                    alert("Password changed successfully.");
+                    window.location.href = "/upload"; // Redirect setelah alert
+                </script>
+            '''
+            
+        cur.close()
+        conn.close()
+
+    return render_template('change_password.html')
+
 # Logout Route
 @app.route('/logout')
 def logout():
@@ -144,7 +177,6 @@ def logout():
     flash("You have been logged out.")
     return redirect(url_for('login'))
 
-# File Upload Route
 @app.route('/upload', methods=['GET', 'POST'])
 def upload_file():
     global uploaded_data
@@ -581,9 +613,14 @@ def upload_file():
         role_access=role_access
     )
 
+
+
 # Download Route
 @app.route('/download')
 def download_file():
+    
+    df = pd.DataFrame()
+    
     global uploaded_data
     global uploaded_data_2
     global uploaded_data_3
@@ -616,7 +653,14 @@ def download_file():
         return redirect(url_for('upload_file'))
 
     # Save DataFrame to Excel file
-    output_file = "D:\\SMI_SlikReader\\.venv\\output.xlsx"
+    current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    directory = os.path.join('..', 'smi-slikreader/file_download')
+    output_file = os.path.join(directory, f'file_{current_datetime}.xlsx')
+    
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
     with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
         """
         uploaded_data.to_excel(writer, sheet_name='header', index=False)
