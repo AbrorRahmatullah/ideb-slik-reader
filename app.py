@@ -6,6 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from config.database import get_db_connection
+from devtools import debug
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
@@ -460,7 +461,8 @@ def upload_file():
                     table_data_6 = uploaded_data_6.to_html(classes="table table-striped", index=False)
 
                     if len(uploaded_data_6)>0:
-                        merged_fKP = uploaded_data_6.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
+                        uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                        merged_fKP = uploaded_data_6.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                         active_fKP = merged_fKP[merged_fKP['kondisi']=='00']
                         active_facility_1 = active_fKP[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon', 'bakiDebet', 'tunggakanPokok', 'tunggakanBunga', 'denda', 'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisKreditPembiayaanKet':'Jenis Kredit/Pembiayaan', 'jenisPenggunaanKet':'Jenis Penggunaan', 'plafon':'Plafon', 'bakiDebet':'Oustanding/Baki Debet', 'tunggakanPokok':'Tunggakan Pokok', 'tunggakanBunga':'Tunggakan Bunga', 'denda':'Denda', 'jumlahHariTunggakan':'Hari Keterlambatan', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
                         #namaDebitur		npwp	tglAktaPendirian	alamat	ljkKet	jenisKreditPembiayaanKet	jenisPenggunaanKet	plafon	bakiDebet	tunggakanPokok	tunggakanBunga	denda	jumlahHariTunggakan	kualitasKet	tahun	bulan
@@ -481,7 +483,8 @@ def upload_file():
                     table_data_7 = uploaded_data_7.to_html(classes="table table-striped", index=False)
                     
                     if len(uploaded_data_7)>0:
-                        merged_fLC = uploaded_data_7.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
+                        uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                        merged_fLC = uploaded_data_7.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                         active_fLC = merged_fLC[merged_fLC['kondisi']=='00']
                         active_facility_2 = active_fLC[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisLcKet', 'tujuanLcKet', 'plafon', 'nominalLc', 'tanggalWanPrestasi', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisLcKet':'Jenis L/C', 'tujuanLcKet':'Tujuan L/C', 'plafon':'Plafon', 'nominalLc':'Oustanding/Baki Debet', 'tanggalWanPrestasi':'Tanggal Wan prestasi', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
                         #ljkKet	jenisLcKet	tujuanLcKet	plafon	nominalLc	tanggalWanPrestasi	kualitasKet	tahunBulan24
@@ -502,7 +505,8 @@ def upload_file():
                     table_data_8 = uploaded_data_8.to_html(classes="table table-striped", index=False)
                     
                     if len(uploaded_data_8)>0:
-                        merged_fGar = uploaded_data_8.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
+                        uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                        merged_fGar = uploaded_data_8.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                         active_fGar = merged_fGar[merged_fGar['kodeKondisi']=='00']
                         active_facility_3 = active_fGar[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisGaransiKet', 'tujuanGaransiKet', 'plafon', 'nominalBg', 'tanggalWanPrestasi', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisGaransiKet':'Jenis Garansi', 'tujuanGaransiKet':'Tujuan Garansi', 'plafon':'Plafon', 'nominalBg':'Oustanding/Baki Debet', 'tanggalWanPrestasi':'Tanggal Wan prestasi', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
                         #ljkKet	jenisGaransiKet	tujuanGaransiKet	plafon	nominalBg	tanggalWanPrestasi	kualitasKet	tahunBulan24
@@ -523,7 +527,8 @@ def upload_file():
                     table_data_9 = uploaded_data_9.to_html(classes="table table-striped", index=False)
                     
                     if len(uploaded_data_9)>0:
-                        merged_fLain = uploaded_data_9.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
+                        uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                        merged_fLain = uploaded_data_9.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                         active_fLain = merged_fLain[merged_fLain['kodeKondisi']=='00']
                         active_facility_4 = active_fLain[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR','jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisFasilitasKet':'Jenis Fasilitas', 'nominalJumlahKwajibanIDR':'Oustanding/Baki Debet', 'jumlahHariTunggakan':'Hari Keterlambatan', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
                         #ljkKet	jenisFasilitasKet	nominalJumlahKwajibanIDR	jumlahHariTunggakan	kualitasKet	tahunBulan24
@@ -544,7 +549,8 @@ def upload_file():
                     table_data_10 = uploaded_data_10.to_html(classes="table table-striped", index=False)
 
                     if len(uploaded_data_10)>0:
-                        merged_fSB = uploaded_data_10.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
+                        uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                        merged_fSB = uploaded_data_10.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                         active_fSB = merged_fSB[merged_fSB['kondisi']=='00']
                         active_facility_5 = active_fSB[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisSuratBerharga', 'nilaiPasar', 'nilaiPerolehan', 'nominalSb', 'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisSuratBerharga':'Jenis Surat Berharga', 'nilaiPasar':'Nilai Pasar', 'nilaiPerolehan':'Nilai Perolehan', 'nominalSb':'Oustanding/Baki Debet', 'jumlahHariTunggakan':'Hari Keterlambatan', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
                         #ljkKet	jenisSuratBerharga	nilaiPasar	nilaiPerolehan	nominalSb	jumlahHariTunggakan	kualitasKet	tahunBulan24
@@ -740,4 +746,4 @@ def download_file():
     return send_file(output_file, as_attachment=True)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=True)
