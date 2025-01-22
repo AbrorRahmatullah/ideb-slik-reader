@@ -68,7 +68,7 @@
 
                 <div class="mb-3">
                     <label for="file" class="form-label">Select a JSON File</label>
-                    <input type="file" name="file" class="form-control" accept=".txt" multiple required onchange="checkFileSize(this)">
+                    <input type="file" name="file" class="form-control" accept=".txt" multiple required>
                 </div>
 
                 <button type="submit" class="btn btn-primary">Upload</button>
@@ -79,7 +79,7 @@
                     <h5 class="text-center">Header</h5>
                     {{ table_data|safe }}
                 </div>
-                {% endif %}
+            {% endif %}
 
             {% if table_data_2 %}
             <div class="table-container mt-4">
@@ -208,20 +208,3 @@
     <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 </body>
 </html>
-
-<script>
-    function checkFileSize(input) {
-        const maxSize = 10 * 1024 * 1024; // 10MB
-        const files = input.files;
-        let totalSize = 0;
-
-        for (let i = 0; i < files.length; i++) {
-            totalSize += files[i].size;
-        }
-
-        if (totalSize > maxSize) {
-            alert("The total file size exceeds the 10MB limit.");
-            input.value = ""; // Clear the selected files
-        }
-    }
-</script>
