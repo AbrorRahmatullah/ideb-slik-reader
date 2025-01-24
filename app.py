@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import json
 
@@ -460,14 +461,22 @@ def upload_file():
         for uploaded_file in uploaded_files:
             if uploaded_file and uploaded_file.filename.endswith('.txt'):
                 try:
-                    # Load JSON data
-                    #data = json.load(uploaded_file)
+                    encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
+                    content = None
+                    for encoding in encodings:
+                        try:
+                            uncleaned_content = uploaded_file.stream.read().decode(encoding, errors='ignore').strip()
+                            content = re.sub(r'[^\x20-\x7E\t\r\n]', '', uncleaned_content)
+                            break  # Jika berhasil, keluar dari loop
+                        except (UnicodeDecodeError, LookupError):
+                            continue  # Jika gagal, coba encoding berikutnya
+                    
+                    if content is None or len(content) == 0:
+                        return "Could not decode file with supported encodings."
+
+                    # Parse JSON dari konten
                     try:
-                        # Read content with specified encoding
-                        content = uploaded_file.stream.read().decode('utf-8-sig')  
                         data = json.loads(content)
-                    except UnicodeDecodeError as e:
-                        return f"Encoding error: {e}"
                     except json.JSONDecodeError as e:
                         return f"Invalid JSON file: {e}"
                     
