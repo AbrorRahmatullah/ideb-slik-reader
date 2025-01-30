@@ -130,7 +130,6 @@ def login():
             session['username'] = username
             session['fullname'] = fullname
             session['role_access'] = user[1]
-            debug(session)
             return redirect(url_for('upload_file'))
         else:
             flash("Invalid username or password.")
@@ -224,7 +223,6 @@ def upload_file():
     
     role_access = session.get('role_access')
     fullname = session.get('fullname')
-    # debug(json.dumps(dict(session), indent=4))
 
     uploaded_data_2 = None
     uploaded_data_3 = None
