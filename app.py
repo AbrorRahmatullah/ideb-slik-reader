@@ -85,7 +85,15 @@ def register():
 
         if existing_user:
             flash("Username already exists.")
-            return render_template('register.html', username=username, role_access=role_access)
+            return render_template('register.html', username=username, fullname=fullname, role_access=role_access)
+        
+        cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+        existing_email = cur.fetchone()
+
+        if existing_email:
+            flash("Email is already registered.")
+            return render_template('register.html', username=username, fullname=fullname, role_access=role_access)
+
         else:
             # Insert new user into the database
             cur.execute("INSERT INTO users (username, password_hash, role_access, fullname, email, created_date) VALUES (?, ?, ?, ?, ?, GETDATE())", (username, password_hash, role_access, fullname, email))
@@ -110,8 +118,9 @@ def login():
         cur = conn.cursor()
 
         # Fetch the hashed password from the database for the given username
-        cur.execute("SELECT password_hash, role_access FROM users WHERE username = ?", (username,))
+        cur.execute("SELECT password_hash, role_access, fullname FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
+        fullname = user[2]
 
         cur.close()
         conn.close()
@@ -119,7 +128,9 @@ def login():
         if user and bcrypt.check_password_hash(user[0], password):
             session.permanent = True
             session['username'] = username
+            session['fullname'] = fullname
             session['role_access'] = user[1]
+            debug(session)
             return redirect(url_for('upload_file'))
         else:
             flash("Invalid username or password.")
@@ -212,6 +223,7 @@ def upload_file():
         return redirect(url_for('login'))
     
     role_access = session.get('role_access')
+    fullname = session.get('fullname')
     # debug(json.dumps(dict(session), indent=4))
 
     uploaded_data_2 = None
@@ -1006,7 +1018,8 @@ def upload_file():
         table_data_cf_3=table_data_cf_3, 
         table_data_cf_4=table_data_cf_4, 
         table_data_cf_5=table_data_cf_5,
-        role_access=role_access
+        role_access=role_access,
+        fullname=fullname
     )
 
 

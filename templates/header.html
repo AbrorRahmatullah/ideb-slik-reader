@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}My Website{% endblock %}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="header">
+        <h2>iDeb SLIK Reader Report</h2>
+        <div class="dropdown">
+            <span id="fullname">{{ fullname }}</span>
+            <div class="dropdown-content">
+                <a href="/change_password">Change Password</a>
+                {% if role_access == 'admin' %}
+                    <a href="/register">Register User</a>
+                {% endif %}
+                <a href="/logout">Logout</a>
+            </div>
+        </div>
+    </div>
+
+    {% block content %}{% endblock %}
+
+</body>
+</html>

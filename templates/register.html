@@ -1,102 +1,87 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register - File Upload System</title>
-    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
-    <style>
-        body {
-            background: #f4f4f4;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
+{% extends "header.html" %}
 
-        .register-card {
-            background: white;
-            padding: 2rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            width: 100%;
-            max-width: 400px;
-        }
+{% block title %}Register User{% endblock %}
 
-        .register-card h1 {
-            text-align: center;
-            margin-bottom: 2rem;
-            color: #333;
-        }
-
-        .form-control:focus {
-            border-color: #007bff;
-            box-shadow: 0 0 5px rgba(0, 123, 255, 0.8);
-        }
-
-        .btn-primary, .btn-danger {
-            width: 100%;
-        }
-
-        .register-text {
-            text-align: right;
-            margin-top: 1rem;
-        }
-
-        .error-message {
-            color: red;
-            font-size: 0.9rem;
-            margin-top: 0.5rem;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="register-card">
-        <h1>Register</h1>
-        <form method="POST">
-            <div class="mb-3">
-                <label for="username" class="form-label">Username</label>
-                <input type="text" name="username" id="username" class="form-control" required placeholder="Enter your username" value="{{ username if username else '' }}">
+{% block content %}
+<div class="register-card">
+    <h1>Register</h1>
+    <form method="POST" class="needs-validation" novalidate>
+        <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <input type="text" name="username" id="username" class="form-control" required placeholder="Enter your username" value="{{ username if username else '' }}">
+            <div class="invalid-feedback">
+                Please enter your username.
             </div>
-            <div class="mb-3">
-                <label for="fullname" class="form-label">Fullname</label>
-                <input type="text" name="fullname" id="fullname" class="form-control" required placeholder="Enter your fullname" value="{{ fullname if fullname else '' }}">
+        </div>
+        <div class="mb-3">
+            <label for="fullname" class="form-label">Fullname</label>
+            <input type="text" name="fullname" id="fullname" class="form-control" required placeholder="Enter your fullname" value="{{ fullname if fullname else '' }}">
+            <div class="invalid-feedback">
+                Please enter your fullname.
             </div>
-            <div class="mb-3">
-                <label for="email" class="form-label">Email</label>
-                <input type="email" name="email" id="email" class="form-control" required placeholder="Enter your email" value="{{ email if email else '' }}">
+        </div>
+        <div class="mb-3">
+            <label for="email" class="form-label">Email</label>
+            <input type="email" name="email" id="email" class="form-control" required placeholder="Enter your email" value="{{ email if email else '' }}">
+            <div class="invalid-feedback">
+                Please enter a valid email address.
             </div>
-            <div class="mb-3">
-                <label for="password" class="form-label">Password</label>
-                <input type="password" name="password" id="password" class="form-control" required placeholder="Enter your password">
+        </div>
+        <div class="mb-3">
+            <label for="password" class="form-label">Password</label>
+            <input type="password" name="password" id="password" class="form-control" required placeholder="Enter your password">
+            <div class="invalid-feedback">
+                Please enter a password.
             </div>
-            <div class="mb-3">
-                <label for="password_confirm" class="form-label">Re-enter Password</label>
-                <input type="password" name="password_confirm" id="password_confirm" class="form-control" required placeholder="Re-enter your password">
+        </div>
+        <div class="mb-3">
+            <label for="password_confirm" class="form-label">Re-enter Password</label>
+            <input type="password" name="password_confirm" id="password_confirm" class="form-control" required placeholder="Re-enter your password">
+            <div class="invalid-feedback">
+                Passwords do not match.
             </div>
-            <div class="mb-3">
-                <label for="role_access" class="form-label">Role Access</label>
-                <select name="role_access" id="role_access" class="form-control" required>
-                    <option value="user" {% if request.form.get('role_access') == 'user' %}selected{% endif %}>User</option>
-                    <option value="admin" {% if request.form.get('role_access') == 'admin' %}selected{% endif %}>Admin</option>
-                </select>
+        </div>
+        <div class="mb-3">
+            <label for="role_access" class="form-label">Role Access</label>
+            <select name="role_access" id="role_access" class="form-control" required>
+                <option value="user" {% if request.form.get('role_access') == 'user' %}selected{% endif %}>User</option>
+                <option value="admin" {% if request.form.get('role_access') == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+            <div class="invalid-feedback">
+                Please select a role.
             </div>
-            <button type="submit" class="btn btn-primary">Register</button>
-            <a href="/upload" class="btn btn-danger">Back</a>
-        </form>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Register</button>
+        <a href="/upload" class="btn btn-danger w-100 mt-2">Back</a>
+    </form>
 
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-            <div class="error-message">
-                {% for message in messages %}
-                    {{ message }}
-                {% endfor %}
-            </div>
-            {% endif %}
-        {% endwith %}
-    </div>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alert alert-danger mt-3">
+            {% for message in messages %}
+                <p>{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endwith %}
+</div>
 
-    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
-</body>
-</html>
+<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+<script>
+    // JavaScript for form validation
+    (function() {
+        'use strict'
+        var forms = document.querySelectorAll('.needs-validation')
+        Array.prototype.slice.call(forms)
+        .forEach(function(form) {
+            form.addEventListener('submit', function(event) {
+                if (!form.checkValidity()) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                }
+                form.classList.add('was-validated')
+            }, false)
+        })
+    })();
+</script>
+{% endblock %}
