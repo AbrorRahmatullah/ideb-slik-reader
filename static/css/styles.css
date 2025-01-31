@@ -22,6 +22,7 @@ body {
     color: white;
     padding: 15px 30px;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
 }
 .dropdown {
     position: relative;
@@ -78,7 +79,7 @@ body {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
     width: 100%;
     max-width: 75%;
-    margin-top: 80px;
+    margin-top: 100px;
 }
 .card-header {
     background-color: #1e3a8a;
@@ -149,6 +150,41 @@ th {
     color: #1e3a8a;
     font-size: 1.75rem;
     font-weight: bold;
+}
+
+.password-input {
+    padding-right: 40px; /* Beri ruang untuk ikon */
+}
+
+.password-toggle {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    font-size: 1.2rem;
+    color: gray;
+}
+
+.password-toggle:hover {
+    color: black;
+}
+
+.password-requirements {
+    font-size: 0.9rem;
+    margin-top: 5px;
+}
+
+.password-requirements p {
+    margin: 0;
+}
+
+.valid {
+    color: green;
+}
+
+.invalid {
+    color: red;
 }
 
 .form-select, .form-control {

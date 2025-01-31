@@ -5,52 +5,58 @@
 {% block content %}
 <div class="register-card">
     <h1>Register</h1>
-    <form method="POST" class="needs-validation" novalidate>
+    <form method="POST" class="needs-validation" novalidate onsubmit="return validatePassword(event)">
         <div class="mb-3">
             <label for="username" class="form-label">Username</label>
             <input type="text" name="username" id="username" class="form-control" required placeholder="Enter your username" value="{{ username if username else '' }}">
-            <div class="invalid-feedback">
-                Please enter your username.
-            </div>
+            <div class="invalid-feedback">Please enter your username.</div>
         </div>
+        
         <div class="mb-3">
             <label for="fullname" class="form-label">Fullname</label>
             <input type="text" name="fullname" id="fullname" class="form-control" required placeholder="Enter your fullname" value="{{ fullname if fullname else '' }}">
-            <div class="invalid-feedback">
-                Please enter your fullname.
-            </div>
+            <div class="invalid-feedback">Please enter your fullname.</div>
         </div>
+        
         <div class="mb-3">
             <label for="email" class="form-label">Email</label>
             <input type="email" name="email" id="email" class="form-control" required placeholder="Enter your email" value="{{ email if email else '' }}">
-            <div class="invalid-feedback">
-                Please enter a valid email address.
-            </div>
+            <div class="invalid-feedback">Please enter a valid email address.</div>
         </div>
+        
         <div class="mb-3">
             <label for="password" class="form-label">Password</label>
-            <input type="password" name="password" id="password" class="form-control" required placeholder="Enter your password">
-            <div class="invalid-feedback">
-                Please enter a password.
+            <div class="position-relative">
+                <input type="password" name="password" id="password" class="form-control password-input" required placeholder="Enter your password" oninput="checkPasswordStrength()">
+                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"></i>
             </div>
+            <div class="password-requirements">
+                <p id="lengthCheck">❌ Minimal panjang 9 digit</p>
+                <p id="capitalCheck">❌ Mengandung huruf kapital</p>
+                <p id="numberCheck">❌ Mengandung angka</p>
+                <p id="specialCheck">❌ Mengandung karakter spesial</p>
+            </div>
+            <div class="invalid-feedback" id="password_error">Password tidak memenuhi syarat.</div>
         </div>
+        
         <div class="mb-3">
             <label for="password_confirm" class="form-label">Re-enter Password</label>
-            <input type="password" name="password_confirm" id="password_confirm" class="form-control" required placeholder="Re-enter your password">
-            <div class="invalid-feedback">
-                Passwords do not match.
+            <div class="position-relative">
+                <input type="password" name="password_confirm" id="password_confirm" class="form-control password-input" required placeholder="Re-enter your password">
+                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"></i>
             </div>
+            <div class="invalid-feedback" id="confirm_password_error">Passwords do not match.</div>
         </div>
+
         <div class="mb-3">
             <label for="role_access" class="form-label">Role Access</label>
             <select name="role_access" id="role_access" class="form-control" required>
                 <option value="user" {% if request.form.get('role_access') == 'user' %}selected{% endif %}>User</option>
                 <option value="admin" {% if request.form.get('role_access') == 'admin' %}selected{% endif %}>Admin</option>
             </select>
-            <div class="invalid-feedback">
-                Please select a role.
-            </div>
+            <div class="invalid-feedback">Please select a role.</div>
         </div>
+
         <button type="submit" class="btn btn-primary w-100">Register</button>
         <a href="/upload" class="btn btn-danger w-100 mt-2">Back</a>
     </form>
@@ -66,22 +72,79 @@
     {% endwith %}
 </div>
 
+<link rel="stylesheet" href="static/bootstrap-icons.css">
 <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 <script>
-    // JavaScript for form validation
-    (function() {
-        'use strict'
-        var forms = document.querySelectorAll('.needs-validation')
-        Array.prototype.slice.call(forms)
-        .forEach(function(form) {
-            form.addEventListener('submit', function(event) {
-                if (!form.checkValidity()) {
-                    event.preventDefault()
-                    event.stopPropagation()
-                }
-                form.classList.add('was-validated')
-            }, false)
-        })
-    })();
+    function togglePassword(inputId, icon) {
+        var inputField = document.getElementById(inputId);
+        
+        if (inputField.type === "password") {
+            inputField.type = "text";
+            icon.classList.remove("bi-eye-slash");
+            icon.classList.add("bi-eye");
+        } else {
+            inputField.type = "password";
+            icon.classList.remove("bi-eye");
+            icon.classList.add("bi-eye-slash");
+        }
+    }
+
+    function checkPasswordStrength() {
+        var password = document.getElementById("password").value;
+
+        var lengthCheck = document.getElementById("lengthCheck");
+        var capitalCheck = document.getElementById("capitalCheck");
+        var numberCheck = document.getElementById("numberCheck");
+        var specialCheck = document.getElementById("specialCheck");
+
+        var hasCapital = /[A-Z]/.test(password);
+        var hasNumber = /\d/.test(password);
+        var hasSpecial = /[@$!%*?&]/.test(password);
+        var isLongEnough = password.length >= 9;
+
+        lengthCheck.innerHTML = isLongEnough ? "✅ Minimal panjang 9 digit" : "❌ Minimal panjang 9 digit";
+        capitalCheck.innerHTML = hasCapital ? "✅ Mengandung huruf kapital" : "❌ Mengandung huruf kapital";
+        numberCheck.innerHTML = hasNumber ? "✅ Mengandung angka" : "❌ Mengandung angka";
+        specialCheck.innerHTML = hasSpecial ? "✅ Mengandung karakter spesial" : "❌ Mengandung karakter spesial";
+
+        lengthCheck.className = isLongEnough ? "valid" : "invalid";
+        capitalCheck.className = hasCapital ? "valid" : "invalid";
+        numberCheck.className = hasNumber ? "valid" : "invalid";
+        specialCheck.className = hasSpecial ? "valid" : "invalid";
+    }
+
+    function validatePassword(event) {
+        event.preventDefault();
+
+        var password = document.getElementById("password").value;
+        var confirmPassword = document.getElementById("password_confirm").value;
+        var passwordError = document.getElementById("password_error");
+        var confirmPasswordError = document.getElementById("confirm_password_error");
+        var form = document.querySelector(".needs-validation");
+        var isValid = true;
+
+        var hasCapital = /[A-Z]/.test(password);
+        var hasNumber = /\d/.test(password);
+        var hasSpecial = /[@$!%*?&]/.test(password);
+        var isLongEnough = password.length >= 9;
+
+        if (!isLongEnough || !hasCapital || !hasNumber || !hasSpecial) {
+            passwordError.style.display = "block";
+            isValid = false;
+        } else {
+            passwordError.style.display = "none";
+        }
+
+        if (password !== confirmPassword) {
+            confirmPasswordError.style.display = "block";
+            isValid = false;
+        } else {
+            confirmPasswordError.style.display = "none";
+        }
+
+        if (isValid) {
+            form.submit();
+        }
+    }
 </script>
 {% endblock %}
