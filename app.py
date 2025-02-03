@@ -7,6 +7,8 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from config.database import get_db_connection
+from functions.popup_notification import render_alert
+from functions.email_validation import is_valid_email
 from devtools import debug
 
 app = Flask(__name__)
@@ -70,10 +72,15 @@ def register():
         role_access = request.form['role_access']
         fullname = request.form['fullname']
         email = request.form['email']
+        
+        required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email']
+        data = {field: request.form[field] for field in required_fields}
+
+        if not all(data.values()):
+            return render_alert("Please fill the empty form!", 'register', username, fullname, email)
 
         if password != password_confirm:
-            flash("Passwords do not match.")
-            return render_template('register.html', username=username, fullname=fullname, email=email)
+            return render_alert("Passwords do not match.", 'register', username, fullname, email)
         
         password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
 
@@ -84,25 +91,25 @@ def register():
         existing_user = cur.fetchone()
 
         if existing_user:
-            flash("Username already exists.")
-            return render_template('register.html', username=username, fullname=fullname, role_access=role_access)
+            return render_alert("Username already exists.", 'register', username, fullname, email, role_access)
         
         cur.execute("SELECT * FROM users WHERE email = ?", (email,))
         existing_email = cur.fetchone()
 
         if existing_email:
-            flash("Email is already registered.")
-            return render_template('register.html', username=username, fullname=fullname, role_access=role_access)
+            return render_alert("Email is already registered.", 'register', username, fullname, email, role_access)
 
         else:
             # Insert new user into the database
             cur.execute("INSERT INTO users (username, password_hash, role_access, fullname, email, created_date) VALUES (?, ?, ?, ?, ?, GETDATE())", (username, password_hash, role_access, fullname, email))
             conn.commit()
-            flash("User registered successfully.")
-            return redirect(url_for('login'))  # Redirect to login page after successful registration
+            return '''
+                <script>
+                    alert("User registered successfully.");
+                    window.location.href = "{}";
+                </script>
+            '''.format(url_for('login'))
 
-        cur.close()
-        conn.close()
 
     return render_template('register.html')
 
@@ -120,12 +127,9 @@ def login():
         # Fetch the hashed password from the database for the given username
         cur.execute("SELECT password_hash, role_access, fullname FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
-        fullname = user[2]
-
-        cur.close()
-        conn.close()
 
         if user and bcrypt.check_password_hash(user[0], password):
+            fullname = user[2]
             session.permanent = True
             session['username'] = username
             session['fullname'] = fullname
