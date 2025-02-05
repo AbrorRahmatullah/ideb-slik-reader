@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import json
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, render_template_string
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from config.database import get_db_connection
@@ -61,6 +61,8 @@ closed_facility_5 = None
 
 # Available flags
 FLAGS = ["Individual", "Perusahaan"]
+
+MAX_FILE_SIZE = 10 * 1024 * 1024
 
 # Register route
 @app.route('/register', methods=['GET', 'POST'])
@@ -306,6 +308,20 @@ def upload_file():
         flag = request.form.get('flag')
         # uploaded_file = request.files['file']
         uploaded_files = request.files.getlist('file')
+        total_file_size = 0
+        for file in uploaded_files:
+            file_size = len(file.read())  # Mengambil ukuran file dalam byte
+            file.seek(0)  # Mengatur posisi pointer kembali ke awal untuk penggunaan file berikutnya
+            total_file_size += file_size
+                      
+        if total_file_size > MAX_FILE_SIZE:
+            return '''
+                <script>
+                    alert("Total file yang diupload terlalu besar. Maksimum 10MB!");
+                    window.location.href = "/upload"; // Redirect setelah alert
+                </script>
+            '''
+            
         
         all_uploaded_data = []
         list_uploaded_data_7 = []
