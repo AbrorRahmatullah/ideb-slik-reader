@@ -1138,8 +1138,12 @@ def download_file():
     global closed_facility_5
 
     if uploaded_data is None:
-        flash("No file data to download.")
-        return redirect(url_for('upload_file'))
+        return '''
+                <script>
+                    alert("No File data to Download!");
+                    window.location.href = "/upload"; // Redirect setelah alert
+                </script>
+            '''
 
     # Save DataFrame to Excel file
     current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
