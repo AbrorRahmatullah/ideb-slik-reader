@@ -769,22 +769,26 @@ def upload_file():
 
                         uploaded_data_7 = pd.DataFrame(json_fLC)
                         uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
-                        uploaded_data_7 = uploaded_data_7.assign(**{'Urutan file': idx})
+                        if len(uploaded_data_7) > 0:
+                            uploaded_data_7 = uploaded_data_7.assign(**{'Urutan file': idx})
                         list_uploaded_data_7.append(uploaded_data_7)
 
                         uploaded_data_8 = pd.DataFrame(json_fGaransi)
                         uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
-                        uploaded_data_8 = uploaded_data_8.assign(**{'Urutan file': idx})
+                        if len(uploaded_data_8) > 0:
+                            uploaded_data_8 = uploaded_data_8.assign(**{'Urutan file': idx})
                         list_uploaded_data_8.append(uploaded_data_8)
 
                         uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                         uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
-                        uploaded_data_9 = uploaded_data_9.assign(**{'Urutan file': idx})
+                        if len(uploaded_data_9) > 0:
+                            uploaded_data_9 = uploaded_data_9.assign(**{'Urutan file': idx})
                         list_uploaded_data_9.append(uploaded_data_9)
 
                         uploaded_data_10 = pd.DataFrame(json_fSuratBerharga)
                         uploaded_data_10.drop(columns=[col for col in columns_to_remove if col in uploaded_data_10.columns], inplace=True)
-                        uploaded_data_10 = uploaded_data_10.assign(**{'Urutan file': idx})
+                        if len(uploaded_data_10) > 0:
+                            uploaded_data_10 = uploaded_data_10.assign(**{'Urutan file': idx})
                         list_uploaded_data_10.append(uploaded_data_10)
 
                         df_kPengurusPemilik = pd.DataFrame(json_kPengurusPemilik) 
