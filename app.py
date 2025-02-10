@@ -754,7 +754,12 @@ def upload_file():
                 except Exception as e:
                     flash(f"Error processing file: {e}")
             else:
-                flash("Please upload a valid JSON file.")
+                return '''
+                    <script>
+                        alert("Please upload a valid Text file.");
+                        window.location.href = "/upload"; // Redirect setelah alert
+                    </script>
+                '''
         
         table_data_7 = (
             "\n".join([df.to_html(classes="table table-striped", index=False) for df in list_uploaded_data_7])
