@@ -488,14 +488,15 @@ def upload_file():
             }
         ]
         
-        for uploaded_file in uploaded_files:
+        for idx, uploaded_file in enumerate(uploaded_files, start=1):
             if uploaded_file and uploaded_file.filename.endswith('.txt'):
                 try:
                     encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
                     content = None
+                    file_content = uploaded_file.stream.read()
                     for encoding in encodings:
                         try:
-                            uncleaned_content = uploaded_file.stream.read().decode(encoding, errors='ignore').strip()
+                            uncleaned_content = file_content.decode(encoding, errors='ignore').strip()
                             content = re.sub(r'[^\x20-\x7E\t\r\n]', '', uncleaned_content)
                             break  # Jika berhasil, keluar dari loop
                         except (UnicodeDecodeError, LookupError):
@@ -652,12 +653,18 @@ def upload_file():
                         del json_perusahaan['kelompokPengurusPemilik']
                         
                         uploaded_data_2 = pd.DataFrame(json_perusahaan, index=[0]).fillna('')
-                        uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0]).fillna('')
-                        uploaded_data_4 = pd.DataFrame(json_dpdebitur).fillna('')
-                        uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0]).fillna('')
-                        uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan).fillna('')
                         
+                        uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0]).fillna('')
+                        
+                        uploaded_data_4 = pd.DataFrame(json_dpdebitur).fillna('')
+                        # uploaded_data_4 = uploaded_data_4.assign(**{'Urutan file': idx})
+                        
+                        uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0]).fillna('')
+                        # uploaded_data_5 = uploaded_data_5.assign(**{'Urutan file': idx})
+                        
+                        uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan).fillna('')
                         uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
+                        uploaded_data_6 = uploaded_data_6.assign(**{'Urutan file': idx})
                         
                         if len(uploaded_files) > 1:
                         # table_data_6 = uploaded_data_6.to_html(classes="table table-striped", index=False)
@@ -687,7 +694,7 @@ def upload_file():
                                     'namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet',
                                     'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon',
                                     'bakiDebet', 'tunggakanPokok', 'tunggakanBunga', 'denda',
-                                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24'
+                                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                                 ]
                             ].rename(columns={
                                 'namaDebitur': 'Nama Debitur/Calon Debitur',
@@ -705,7 +712,8 @@ def upload_file():
                                 'jumlahHariTunggakan':'Hari Keterlambatan',
                                 'kualitas':'Kode Kolektibilitas Saat ini',
                                 'kualitasKet':'Kolektibilitas Saat ini',
-                                'tahunBulan24':'Periode Pelaporan Terakhir'
+                                'tahunBulan24':'Periode Pelaporan Terakhir',
+                                'Urutan file': 'File ke'
                                 }
                             )
                             #namaDebitur		npwp	tglAktaPendirian	alamat	ljkKet	jenisKreditPembiayaanKet	jenisPenggunaanKet	plafon	bakiDebet	tunggakanPokok	tunggakanBunga	denda	jumlahHariTunggakan	kualitasKet	tahun	bulan
@@ -716,25 +724,67 @@ def upload_file():
                             table_data_af_1 = active_facility_1.to_html(classes="table table-striped", index=False)
 
                             closed_fKP = merged_fKP[merged_fKP['kondisi']=='02']
-                            closed_facility_1 = closed_fKP[['namaDebitur','npwp','tglAktaPendirian','alamat', 'ljkKet', 'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon', 'bakiDebet', 'tunggakanPokok', 'tunggakanBunga', 'denda', 'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24']].rename(columns={'namaDebitur': 'Nama Debitur/Calon Debitur','npwp':'Nomor Identitas','tglAktaPendirian':'Tanggal Lahir/Pendirian','alamat':'Alamat', 'ljkKet':'Kreditur/Pelapor', 'jenisKreditPembiayaanKet':'Jenis Kredit/Pembiayaan', 'jenisPenggunaanKet':'Jenis Penggunaan', 'plafon':'Plafon', 'bakiDebet':'Oustanding/Baki Debet', 'tunggakanPokok':'Tunggakan Pokok', 'tunggakanBunga':'Tunggakan Bunga', 'denda':'Denda', 'jumlahHariTunggakan':'Hari Keterlambatan', 'kualitas':'Kode Kolektibilitas Saat ini', 'kualitasKet':'Kolektibilitas Saat ini', 'tahunBulan24':'Periode Pelaporan Terakhir'})
+                            closed_facility_1 = closed_fKP[
+                                [
+                                    'namaDebitur',
+                                    'npwp',
+                                    'tglAktaPendirian',
+                                    'alamat',
+                                    'ljkKet',
+                                    'jenisKreditPembiayaanKet',
+                                    'jenisPenggunaanKet',
+                                    'plafon',
+                                    'bakiDebet',
+                                    'tunggakanPokok',
+                                    'tunggakanBunga',
+                                    'denda',
+                                    'jumlahHariTunggakan',
+                                    'kualitas',
+                                    'kualitasKet',
+                                    'tahunBulan24',
+                                    'Urutan file'
+                                ]
+                            ].rename(columns={
+                                'namaDebitur': 'Nama Debitur/Calon Debitur',
+                                'npwp':'Nomor Identitas',
+                                'tglAktaPendirian':'Tanggal Lahir/Pendirian',
+                                'alamat':'Alamat',
+                                'ljkKet':'Kreditur/Pelapor',
+                                'jenisKreditPembiayaanKet':'Jenis Kredit/Pembiayaan',
+                                'jenisPenggunaanKet':'Jenis Penggunaan',
+                                'plafon':'Plafon',
+                                'bakiDebet':'Oustanding/Baki Debet',
+                                'tunggakanPokok':'Tunggakan Pokok',
+                                'tunggakanBunga':'Tunggakan Bunga',
+                                'denda':'Denda',
+                                'jumlahHariTunggakan':'Hari Keterlambatan',
+                                'kualitas':'Kode Kolektibilitas Saat ini',
+                                'kualitasKet':'Kolektibilitas Saat ini',
+                                'tahunBulan24':'Periode Pelaporan Terakhir',
+                                'Urutan file': 'File ke'
+                                })
                             closed_facility_1 = closed_facility_1.reset_index(names='No')
                             closed_facility_1['No'] = closed_facility_1.index+1
                             table_data_cf_1 = closed_facility_1.to_html(classes="table table-striped", index=False)
 
                         uploaded_data_7 = pd.DataFrame(json_fLC)
                         uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
+                        uploaded_data_7 = uploaded_data_7.assign(**{'Urutan file': idx})
                         list_uploaded_data_7.append(uploaded_data_7)
 
                         uploaded_data_8 = pd.DataFrame(json_fGaransi)
                         uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
+                        uploaded_data_8 = uploaded_data_8.assign(**{'Urutan file': idx})
                         list_uploaded_data_8.append(uploaded_data_8)
 
                         uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                         uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
+                        uploaded_data_9 = uploaded_data_9.assign(**{'Urutan file': idx})
                         list_uploaded_data_9.append(uploaded_data_9)
 
-                        uploaded_data_10= pd.DataFrame(json_fSuratBerharga)
+                        uploaded_data_10 = pd.DataFrame(json_fSuratBerharga)
                         uploaded_data_10.drop(columns=[col for col in columns_to_remove if col in uploaded_data_10.columns], inplace=True)
+                        uploaded_data_10 = uploaded_data_10.assign(**{'Urutan file': idx})
                         list_uploaded_data_10.append(uploaded_data_10)
 
                         df_kPengurusPemilik = pd.DataFrame(json_kPengurusPemilik) 
@@ -807,7 +857,8 @@ def upload_file():
                     'tanggalWanPrestasi':'Tanggal Wan prestasi',
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
-                    'tahunBulan24':'Periode Pelaporan Terakhir'
+                    'tahunBulan24':'Periode Pelaporan Terakhir',
+                    'Urutan file': 'File ke'
                 }
                 
                 # Process active facilities
@@ -818,7 +869,7 @@ def upload_file():
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisLcKet','tujuanLcKet','plafon','nominalLc',
                             'tanggalWanPrestasi', 'kualitas', 'kualitasKet',
-                            'tahunBulan24'
+                            'tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 active_facility_2.insert(1, 'Nomor Laporan', nomor_laporan)
@@ -834,7 +885,7 @@ def upload_file():
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisLcKet','tujuanLcKet','plafon','nominalLc',
                             'tanggalWanPrestasi', 'kualitas', 'kualitasKet',
-                            'tahunBulan24'
+                            'tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 closed_facility_2.reset_index(drop=True, inplace=True)
@@ -866,7 +917,8 @@ def upload_file():
                     'tanggalWanPrestasi':'Tanggal Wan prestasi',
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
-                    'tahunBulan24':'Periode Pelaporan Terakhir'
+                    'tahunBulan24':'Periode Pelaporan Terakhir',
+                    'Urutan file': 'File ke'
                 }
 
                 # Process active facilities
@@ -877,7 +929,7 @@ def upload_file():
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisGaransiKet','tujuanGaransiKet','plafon',
                             'nominalBg', 'tanggalWanPrestasi','kualitas',
-                            'kualitasKet','tahunBulan24'
+                            'kualitasKet','tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 active_facility_3.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
@@ -893,7 +945,7 @@ def upload_file():
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisGaransiKet','tujuanGaransiKet','plafon',
                             'nominalBg', 'tanggalWanPrestasi','kualitas',
-                            'kualitasKet','tahunBulan24'
+                            'kualitasKet','tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 closed_facility_3.reset_index(drop=True, inplace=True)
@@ -920,7 +972,8 @@ def upload_file():
                     'jumlahHariTunggakan':'Hari Keterlambatan',
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
-                    'tahunBulan24':'Periode Pelaporan Terakhir'
+                    'tahunBulan24':'Periode Pelaporan Terakhir',
+                    'Urutan file': 'File ke'
                 }
 
                 active_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '00']
@@ -929,7 +982,7 @@ def upload_file():
                         [
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR',
-                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24'
+                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 
@@ -944,7 +997,7 @@ def upload_file():
                         [
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR',
-                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24'
+                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                         ]
                     ].rename(columns=column_rename_map))
                 closed_facility_4.reset_index(drop=True, inplace=True)
@@ -974,7 +1027,8 @@ def upload_file():
                         'jumlahHariTunggakan': 'Hari Keterlambatan',
                         'kualitas': 'Kode Kolektibilitas Saat ini',
                         'kualitasKet': 'Kolektibilitas Saat ini',
-                        'tahunBulan24': 'Periode Pelaporan Terakhir'
+                        'tahunBulan24': 'Periode Pelaporan Terakhir',
+                        'Urutan file': 'File ke'
                     }
 
                     active_fSB = merged_fSB[merged_fSB['kondisi'] == '00']
@@ -989,7 +1043,7 @@ def upload_file():
                                 'namaDebitur','npwp','tglAktaPendirian','alamat','ljkKet',
                                 'jenisSuratBerharga','nilaiPasar','nilaiPerolehan',
                                 'nominalSb','jumlahHariTunggakan','kualitas',
-                                'kualitasKet','tahunBulan24'
+                                'kualitasKet','tahunBulan24','Urutan file'
                             ]
                         ].rename(columns=column_rename_map))
                     
@@ -1005,7 +1059,7 @@ def upload_file():
                                 'namaDebitur','npwp','tglAktaPendirian','alamat','ljkKet',
                                 'jenisSuratBerharga','nilaiPasar','nilaiPerolehan',
                                 'nominalSb','jumlahHariTunggakan','kualitas',
-                                'kualitasKet','tahunBulan24'
+                                'kualitasKet','tahunBulan24','Urutan file'
                             ]
                         ].rename(columns=column_rename_map))
                     closed_facility_5.reset_index(drop=True, inplace=True)
