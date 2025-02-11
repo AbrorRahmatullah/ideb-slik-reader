@@ -45,6 +45,8 @@ uploaded_data_8 = None
 uploaded_data_9 = None
 uploaded_data_10 = None
 uploaded_data_11 = None
+
+data_available = False
 flag = ''
 
 active_facility_1 = None
@@ -118,7 +120,10 @@ def register():
 # Login Route
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
+    if request.method == 'GET':
+        session['data_available'] = False
+        
+    elif request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         
@@ -209,6 +214,7 @@ def upload_file():
     global uploaded_data_9
     global uploaded_data_10
     global uploaded_data_11
+    
     global flag
 
     global active_facility_1
@@ -304,7 +310,9 @@ def upload_file():
 
     columns_to_remove = ['agunan', 'penjamin']
 
-    if request.method == 'POST':
+    if request.method == 'GET':
+        session['data_available'] = False
+    elif request.method == 'POST':
         flag = request.form.get('flag')
         # uploaded_file = request.files['file']
         uploaded_files = request.files.getlist('file')
@@ -804,6 +812,7 @@ def upload_file():
 
                         uploaded_data_11 = df_expanded #pd.DataFrame(json_kPengurusPemilik, index=[0])
                         table_data_11 = uploaded_data_11.to_html(classes="table table-striped", index=False)
+                    session['data_available'] = True
 
                 except Exception as e:
                     flash(f"Error processing file: {e}")
@@ -1072,7 +1081,7 @@ def upload_file():
                 except Exception as e:
                     table_data_af_5 = f"Error processing active facilities: {e}"
                     table_data_cf_5 = f"Error processing closed facilities: {e}"
-
+                    
            
     return render_template(
         'upload.html',
@@ -1088,7 +1097,8 @@ def upload_file():
         table_data_9=table_data_9,
         table_data_10=table_data_10,
         table_data_11=table_data_11, 
-        flags=FLAGS, 
+        flags=FLAGS,
+        # data_available = data_available, 
         table_data_af_1=table_data_af_1, 
         table_data_af_2=table_data_af_2, 
         table_data_af_3=table_data_af_3, 
@@ -1123,8 +1133,9 @@ def download_file():
     global uploaded_data_9
     global uploaded_data_10
     global uploaded_data_11
+    
     global flag
-
+    
     global active_facility_1
     global active_facility_2
     global active_facility_3
@@ -1137,7 +1148,7 @@ def download_file():
     global closed_facility_4
     global closed_facility_5
 
-    if uploaded_data is None:
+    if not session.get('data_available') or uploaded_data is None:
         return '''
                 <script>
                     alert("No File data to Download!");
