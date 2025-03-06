@@ -332,6 +332,7 @@ def upload_file():
             
         
         all_uploaded_data = []
+        list_debitur = []
         list_uploaded_data_6 = []
         list_uploaded_data_7 = []
         list_uploaded_data_8 = []
@@ -550,7 +551,9 @@ def upload_file():
 
                         uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0])
 
-                        uploaded_data_4 = pd.DataFrame(json_dpdebitur)
+                        for debitur in json_dpdebitur:
+                            list_debitur.append(debitur)
+                        uploaded_data_4 = pd.DataFrame(list_debitur)
 
                         uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0])
                         
@@ -746,7 +749,7 @@ def upload_file():
                     combined_data_6 = pd.concat(list_uploaded_data_6, ignore_index=True)
 
                     # Merge berdasarkan 'ljk' dan 'pelapor'
-                    merged_fKP = combined_data_6.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
+                    merged_fKP = combined_data_6.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
 
                     # **ACTIVE FACILITY (Kondisi == '00')**
                     active_fKP = merged_fKP[merged_fKP['kondisi'] == '00']
@@ -1109,8 +1112,10 @@ def upload_file():
                 except Exception as e:
                     table_data_af_5 = f"Error processing active facilities: {e}"
                     table_data_cf_5 = f"Error processing closed facilities: {e}"
-                        
-           
+    
+    if table_data:
+        flash("File berhasil diupload!")                
+    
     return render_template(
         'upload.html',
         table_data=table_data,

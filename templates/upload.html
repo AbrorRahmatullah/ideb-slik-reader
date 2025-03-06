@@ -27,6 +27,13 @@
             </div>
             <button type="submit" class="btn btn-primary" >Upload</button>    
         </form>
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <script>
+                alert("{{ messages[0] }}");
+                </script>
+            {% endif %}
+        {% endwith %}
 
         {% if table_data %}
             <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
