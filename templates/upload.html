@@ -20,13 +20,18 @@
             </div>
             <div class="mb-3">
                 <div class="d-flex align-items-center">
-                    <label for="file" class="form-label me-2">Select a JSON File</label>
-                    <small class="text-danger">*Maksimal size file upload 10MB</small> 
+                    <label for="file" class="form-label me-2">Select JSON File(s)</label>
+                    <small class="text-danger">*Maksimal size file upload 110MB</small> 
                 </div>
                 <input type="file" name="file" class="form-control" accept=".txt" multiple required>
             </div>
-            <button type="submit" class="btn btn-primary" >Upload</button>    
+            <div class="mb-3">
+                <label for="nama_file" class="form-label">Nama File</label>
+                <input type="text" name="nama_file" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload</button>    
         </form>
+        
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 <script>
@@ -35,129 +40,60 @@
             {% endif %}
         {% endwith %}
 
-        {% if table_data %}
+        {# Definisi tabel dan judul #}
+        {% set tables = [
+            {'var': table_data, 'title': 'Header'},
+            {'var': table_data_2, 'title': 'Debitur'},
+            {'var': table_data_3, 'title': 'Parameter Pencarian'},
+            {'var': table_data_4, 'title': 'Data Pokok Debitur'},
+            {'var': table_data_5, 'title': 'Ringkasan Fasilitas'},
+            {'var': table_data_6, 'title': 'Fasilitas Kredit Pembiayaan'},
+            {'var': table_data_7, 'title': 'Fasilitas LC'},
+            {'var': table_data_8, 'title': 'Fasilitas Garansi'},
+            {'var': table_data_9, 'title': 'Fasilitas Lainnya'},
+            {'var': table_data_10, 'title': 'Fasilitas Surat Berharga'},
+            {'var': table_data_11, 'title': 'Kelompok Pengurus Pemilik'},
+            {'var': table_data_af_1, 'title': 'Fasilitas Aktif Kredit Pembiayaan'},
+            {'var': table_data_cf_1, 'title': 'Fasilitas Lunas Kredit Pembiayaan'},
+            {'var': table_data_af_2, 'title': 'Fasilitas Aktif L/C'},
+            {'var': table_data_cf_2, 'title': 'Fasilitas Lunas L/C'},
+            {'var': table_data_af_3, 'title': 'Fasilitas Aktif Bank Garansi'},
+            {'var': table_data_cf_3, 'title': 'Fasilitas Lunas Bank Garansi'},
+            {'var': table_data_af_4, 'title': 'Fasilitas Aktif Lainnya'},
+            {'var': table_data_cf_4, 'title': 'Fasilitas Lunas Lainnya'},
+            {'var': table_data_af_5, 'title': 'Fasilitas Aktif Surat Berharga'},
+            {'var': table_data_cf_5, 'title': 'Fasilitas Lunas Surat Berharga'}
+        ] %}
+
+        {# Render semua tabel dengan loop #}
+        {% for item in tables %}
+            {% if item.var is defined and item.var %}
             <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-                <h5 class="text-center">Header</h5>
-                {{ table_data|safe }}
+                <h5 class="text-center">{{ item.title }}</h5>
+                {{ item.var|safe }}
             </div>
-        {% endif %}
+            {% endif %}
+        {% endfor %}
 
-        {% if table_data_2 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Debitur</h5>
-            {{ table_data_2|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_3 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Parameter Pencarian</h5>
-            {{ table_data_3|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_4 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Data Pokok Debitur</h5>
-            {{ table_data_4|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_5 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Ringkasan Fasilitas</h5>
-            {{ table_data_5|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_6 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Kredit Pembiayaan</h5>
-            {{ table_data_6|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_7 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas LC</h5>
-            {{ table_data_7|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_8 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Garansi</h5>
-            {{ table_data_8|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_9 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Lainnya</h5>
-            {{ table_data_9|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_10 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Surat Berharga</h5>
-            {{ table_data_10|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_11 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Kelompok Pengurus Pemilik</h5>
-            {{ table_data_11|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_af_1 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Aktif Kredit Pembiayaan</h5>
-            {{ table_data_af_1|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_cf_1 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Lunas Kredit Pembiayaan</h5>
-            {{ table_data_cf_1|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_af_2 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Aktif L/C</h5>
-            {{ table_data_af_2|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_af_3 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Aktif Bank Garansi</h5>
-            {{ table_data_af_3|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_af_4 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Aktif Lainnya</h5>
-            {{ table_data_af_4|safe }}
-        </div>
-        {% endif %}
-
-        {% if table_data_af_5 %}
-        <div class="table-container mt-4" style="max-height: 400px; overflow-y: auto;">
-            <h5 class="text-center">Fasilitas Aktif Surat Berharga</h5>
-            {{ table_data_af_5|safe }}
-        </div>
-        {% endif %}
-
+        {% if table_data %}
         <a href="/download" class="btn btn-success mt-3">Download Excel File</a>
+        {% endif %}
     </div>
 </div>
-
 {% endblock %}
 
 <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+
+<script>
+// Add loading spinner when form is submitted
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form');
+    const submitBtn = form.querySelector('button[type="submit"]');
+    
+    form.addEventListener('submit', function() {
+        // Change button text and add spinner
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+        submitBtn.disabled = true;
+    });
+});
+</script>

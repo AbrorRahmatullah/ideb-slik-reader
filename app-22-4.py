@@ -1,4 +1,3 @@
-from io import BytesIO
 import os
 import re
 import pandas as pd
@@ -6,22 +5,39 @@ import json
 import threading
 import queue
 import uuid
-import traceback
 
 from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
+from werkzeug.utils import secure_filename
+from werkzeug.datastructures import FileStorage
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
+from functions.email_validation import is_valid_email
 from devtools import debug
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
 bcrypt = Bcrypt(app)
 
+# Dummy credentials
+#VALID_USERNAME = "admin"
+#VALID_PASSWORD = "password123"
+
 # Configure session timeout to 10 minutes
-app.permanent_session_lifetime = timedelta(hours=5)
+app.permanent_session_lifetime = timedelta(hours=1)
+
+# Dummy user data (username: password)
+# users = {
+#     "user1": bcrypt.generate_password_hash("password123").decode('utf-8'),
+#     "user2": bcrypt.generate_password_hash("secret456").decode('utf-8'),
+#     "user3": bcrypt.generate_password_hash("power789").decode('utf-8'),
+#     "user4": bcrypt.generate_password_hash("super012").decode('utf-8'),
+#     "admin": bcrypt.generate_password_hash("admin789").decode('utf-8'),
+# }
+
+# Database connection function
 
 # Temporary storage for DataFrame
 uploaded_data = None
@@ -57,8 +73,7 @@ FLAGS = ["Individual", "Perusahaan"]
 # Create a global task queue and task results dictionary
 task_queue = queue.Queue()
 task_results = {}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-MAX_FILE_BIG_SIZE = 110 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 110 * 1024 * 1024  # 110MB
 
 # Background worker function
 def process_files_worker():
@@ -92,9 +107,6 @@ def process_files_worker():
             task_results[task_id] = {"status": "error", "error": str(e)}
         finally:
             task_queue.task_done()
-
-def escape_sql(val):
-    return val.replace("'", "''") if isinstance(val, str) else val
 
 # Start background worker thread
 worker_thread = threading.Thread(target=process_files_worker, daemon=True)
@@ -232,45 +244,6 @@ def logout():
     session.pop('username', None)
     flash("You have been logged out.")
     return redirect(url_for('login'))
-
-def insert_data(cursor, table_name, data_item, columns_to_remove=None, extra_columns=None):
-    """
-    Fungsi umum untuk menyisipkan data ke tabel tertentu dengan opsi metadata tambahan.
-    """
-    if not data_item:
-        return
-    
-    try:
-        # Filter kolom jika perlu
-        filtered_item = data_item
-        if columns_to_remove:
-            if isinstance(data_item, dict):
-                filtered_item = {k: v for k, v in data_item.items() if k not in columns_to_remove}
-        
-        # Penyesuaian key tertentu (khusus untuk tabel tertentu)
-        if table_name == "slik_ringkasan_fasilitas" and "krediturBPR/S" in filtered_item:
-            filtered_item["krediturBPR_S"] = filtered_item.pop("krediturBPR/S")
-        
-        # Tambahkan kolom tambahan
-        if extra_columns:
-            filtered_item.update(extra_columns)
-        
-        # Siapkan query
-        columns = ', '.join(filtered_item.keys())
-        placeholders = ', '.join(['?'] * len(filtered_item))
-        values = tuple(filtered_item.values())
-
-        query = f"""
-            INSERT INTO {table_name} ({columns})
-            VALUES ({placeholders})
-        """
-
-        cursor.execute(query, values)
-
-    except Exception as e:
-        print(f"Error inserting data into {table_name}: {e}")
-        traceback.print_exc()
-        print(f"Item: {data_item}")
 
 def process_uploaded_files(uploaded_files, user_info):
     global uploaded_data
@@ -540,17 +513,12 @@ def process_uploaded_files(uploaded_files, user_info):
         }
     ]
 
-    username = user_info['username']
-    nama_file = user_info['nama_file']
-    current_datetime = datetime.now()
-    
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
         if uploaded_file and uploaded_file.filename.endswith('.txt'):
             try:
                 encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
                 content = None
                 file_content = uploaded_file.stream.read()
-                
                 for encoding in encodings:
                     try:
                         uncleaned_content = file_content.decode(encoding, errors='ignore').strip()
@@ -568,129 +536,11 @@ def process_uploaded_files(uploaded_files, user_info):
                 except json.JSONDecodeError as e:
                     return {"error": f"Invalid JSON file: {e}"}
                 
-                conn = get_db_connection()
-                cur = conn.cursor()
-                
-                bulan_dict = {
-                    1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
-                    5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
-                    9: "September", 10: "Oktober", 11: "November", 12: "Desember"
-                }
-                
                 json_header = data['header']
-                posisiDataTerakhir = data['perusahaan']['posisiDataTerakhir']
-                date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
-                json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
-                
-                if json_header:
-                    try:
-                        # Buat salinan tanpa key yang tidak dibutuhkan
-                        filtered_item = {k: v for k, v in json_header.items() if k not in columns_to_remove}
-
-                        # Siapkan nama kolom tambahan
-                        base_columns = ['periodeData', 'username', 'namaFileUpload', 'uploadDate']
-                        base_values = [json_posisiDataTerakhir, username, nama_file, current_datetime]
-
-                        # Gabungkan kolom dan nilai tambahan dengan hasil filter
-                        all_columns = base_columns + list(filtered_item.keys())
-                        all_values = tuple(base_values + list(filtered_item.values()))
-
-                        # Buat string kolom dan placeholders
-                        columns = ', '.join(all_columns)
-                        placeholders = ', '.join(['?'] * len(all_columns))
-
-                        # Query insert akhir
-                        query = f"""
-                            INSERT INTO slik_header ({columns})
-                            VALUES ({placeholders})
-                        """
-
-                        cur.execute(query, all_values)
-                        conn.commit()
-
-                    except Exception as e:
-                        print(f"Error inserting data: {e}")
-                        traceback.print_exc()
-                        print(f"Item: {json_header}")
-                        
                 uploaded_data = pd.DataFrame(json_header, index=[0])
                 table_data = uploaded_data.to_html(classes="table table-striped", index=False)
                 
-                if 'individual' in data:
-                    json_individual = data['individual']
-                    json_paramPencarian = data['individual']['parameterPencarian']
-                    json_dpdebitur = data['individual']['dataPokokDebitur']
-                    json_rFasilitas = data['individual']['ringkasanFasilitas']
-                    json_fKreditPembiayan = data['individual']['fasilitas']['kreditPembiayan']
-                    json_fLC = data['individual']['fasilitas']['lc']
-                    json_fGaransi = data['individual']['fasilitas']['garansiYgDiberikan']
-                    json_fFasilitasLain = data['individual']['fasilitas']['fasilitasLain']
-                    nomor_laporan = json_individual['nomorLaporan']
-
-                    del json_individual['dataPokokDebitur']
-                    del json_individual['parameterPencarian']
-                    del json_individual['fasilitas']
-                    del json_individual['ringkasanFasilitas']
-
-                    uploaded_data_2 = pd.DataFrame(json_individual, index=[0])
-
-                    # nomor_laporan = uploaded_data_2['nomorLaporan'].to_string(index=False)
-
-                    uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0])
-
-                    for debitur in json_dpdebitur:
-                        list_debitur.append(debitur)
-                    uploaded_data_4 = pd.DataFrame(list_debitur)
-
-                    uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0])
-                    
-                    if len(uploaded_files) > 1:
-                    # table_data_6 = uploaded_data_6.to_html(classes="table table-striped", index=False)
-                        all_uploaded_data.append(uploaded_data_2)
-                        all_uploaded_data.append(uploaded_data_3)
-                        all_uploaded_data.append(uploaded_data_4)
-                        all_uploaded_data.append(uploaded_data_5)
-                        # all_uploaded_data.append(uploaded_data_6)
-                        
-                        for data in all_uploaded_data:
-                            table_html = data.to_html(classes="table table-striped", index=False).strip()
-                            list_table_data.append(table_html)
-                            
-                    else:
-                        table_data_2 = uploaded_data_2.to_html(classes="table table-striped", index=False)
-                        table_data_3 = uploaded_data_3.to_html(classes="table table-striped", index=False)
-                        table_data_4 = uploaded_data_4.to_html(classes="table table-striped", index=False)
-                        table_data_5 = uploaded_data_5.to_html(classes="table table-striped", index=False)
-                    
-                    if len(json_fKreditPembiayan) >0 :
-                        uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan)
-                        uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
-                        if len(uploaded_data_6) > 0:
-                            uploaded_data_6 = uploaded_data_6.assign(**{'urutanFile': idx})
-                        list_uploaded_data_6.append(uploaded_data_6)
-
-                    if len(json_fLC) >0 :
-                        uploaded_data_7 = pd.DataFrame(json_fLC)
-                        uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
-                        if len(uploaded_data_7) > 0:
-                            uploaded_data_7 = uploaded_data_7.assign(**{'urutanFile': idx})
-                        list_uploaded_data_7.append(uploaded_data_7)
-
-                    if len(json_fGaransi) >0 :
-                        uploaded_data_8 = pd.DataFrame(json_fGaransi)
-                        uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
-                        if len(uploaded_data_8) > 0:
-                            uploaded_data_8 = uploaded_data_8.assign(**{'urutanFile': idx})
-                        list_uploaded_data_8.append(uploaded_data_8)
-
-                    if len(json_fFasilitasLain) >0 :
-                        uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
-                        uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
-                        if len(uploaded_data_9) > 0:
-                            uploaded_data_9 = uploaded_data_9.assign(**{'urutanFile': idx})
-                        list_uploaded_data_9.append(uploaded_data_9)
-
-                elif 'perusahaan' in data:
+                if 'perusahaan' in data:
                     json_perusahaan = data['perusahaan']
                     json_paramPencarian =data['perusahaan']['parameterPencarian']
                     json_dpdebitur = data['perusahaan']['dataPokokDebitur']
@@ -714,45 +564,6 @@ def process_uploaded_files(uploaded_files, user_info):
                     uploaded_data_4 = pd.DataFrame(json_dpdebitur).fillna('')
                     uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0]).fillna('')
                     
-                    extra = {
-                        'periodeData': json_posisiDataTerakhir,
-                        'username': user_info['username'],
-                        'namaFileUpload': user_info['nama_file'],
-                        'uploadDate': current_datetime
-                    }
-                    
-                    if json_perusahaan:
-                        insert_data(cur, "slik_perusahaan", {
-                            "nomorLaporan": json_perusahaan.get("nomorLaporan"),
-                            "posisiDataTerakhir": json_perusahaan.get("posisiDataTerakhir"),
-                            "tanggalPermintaan": json_perusahaan.get("tanggalPermintaan")
-                        }, extra_columns=extra)
-                        conn.commit()
-
-                    if json_paramPencarian:
-                        insert_data(cur, "slik_parameter_pencarian", json_paramPencarian, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
-                    if json_dpdebitur:
-                        for item in json_dpdebitur:
-                            insert_data(cur, "slik_data_pokok_debitur", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
-                    if json_kPengurusPemilik:
-                        for kelompok in json_kPengurusPemilik:
-                            for pengurus in kelompok["pengurusPemilik"]:
-                                full_item = {
-                                    "kodeLJK": kelompok["kodeLJK"],
-                                    "namaLJK": kelompok["namaLJK"],
-                                    **pengurus
-                                }
-                                insert_data(cur, "slik_kelompok_pengurus_pemilik", full_item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
-                    if json_rFasilitas:
-                        insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-                          
                     if len(uploaded_files) > 1:
                         all_uploaded_data.append(uploaded_data_2)
                         all_uploaded_data.append(uploaded_data_3)
@@ -768,65 +579,41 @@ def process_uploaded_files(uploaded_files, user_info):
                         table_data_4 = uploaded_data_4.to_html(classes="table table-striped", index=False)
                         table_data_5 = uploaded_data_5.to_html(classes="table table-striped", index=False)
                     
-                    if json_fKreditPembiayan:
-                        for item in json_fKreditPembiayan:
-                            insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
+                    if len(json_fKreditPembiayan) > 0:
                         uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan)
                         uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
                         if len(uploaded_data_6) > 0:
-                            uploaded_data_6 = uploaded_data_6.assign(**{'urutanFile': idx})
+                            uploaded_data_6 = uploaded_data_6.assign(**{'Urutan file': idx})
                         list_uploaded_data_6.append(uploaded_data_6)
 
-                    # Fasilitas LC
-                    if json_fLC:
-                        for item in json_fLC:
-                            insert_data(cur, "slik_fasilitas_lc", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
+                    if len(json_fLC) > 0:
                         uploaded_data_7 = pd.DataFrame(json_fLC)
                         uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
                         if len(uploaded_data_7) > 0:
-                            uploaded_data_7 = uploaded_data_7.assign(**{'urutanFile': idx})
+                            uploaded_data_7 = uploaded_data_7.assign(**{'Urutan file': idx})
                         list_uploaded_data_7.append(uploaded_data_7)
-
-                    # Fasilitas Garansi
-                    if json_fGaransi:
-                        for item in json_fGaransi:
-                            insert_data(cur, "slik_fasilitas_garansi", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
+                        
+                    if len(json_fGaransi) >0 :
                         uploaded_data_8 = pd.DataFrame(json_fGaransi)
                         uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
                         if len(uploaded_data_8) > 0:
-                            uploaded_data_8 = uploaded_data_8.assign(**{'urutanFile': idx})
+                            uploaded_data_8 = uploaded_data_8.assign(**{'Urutan file': idx})
                         list_uploaded_data_8.append(uploaded_data_8)
 
-                    # Fasilitas Lainnya
-                    if json_fFasilitasLain:
-                        for item in json_fFasilitasLain:
-                            insert_data(cur, "slik_fasilitas_lainnya", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
+                    if len(json_fFasilitasLain) >0 :
                         uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                         uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
                         if len(uploaded_data_9) > 0:
-                            uploaded_data_9 = uploaded_data_9.assign(**{'urutanFile': idx})
+                            uploaded_data_9 = uploaded_data_9.assign(**{'Urutan file': idx})
                         list_uploaded_data_9.append(uploaded_data_9)
 
-                    # Surat Berharga
-                    if json_fSuratBerharga:
-                        for item in json_fSuratBerharga:
-                            insert_data(cur, "slik_fasilitas_surat_berharga", item, columns_to_remove, extra_columns=extra)
-                        conn.commit()
-
+                    if len(json_fSuratBerharga) >0 :
                         uploaded_data_10 = pd.DataFrame(json_fSuratBerharga)
                         uploaded_data_10.drop(columns=[col for col in columns_to_remove if col in uploaded_data_10.columns], inplace=True)
                         if len(uploaded_data_10) > 0:
-                            uploaded_data_10 = uploaded_data_10.assign(**{'urutanFile': idx})
-                        list_uploaded_data_10.append(uploaded_data_10)      
-                                          
+                            uploaded_data_10 = uploaded_data_10.assign(**{'Urutan file': idx})
+                        list_uploaded_data_10.append(uploaded_data_10)
+                        
                     df_kPengurusPemilik = pd.DataFrame(json_kPengurusPemilik) 
                     data_temp = {'kodeLJK': ['1', '2', '3'], 'namaLJK': ['A', 'B', 'C'], 'pengurusPemilik': ['X', 'Y', 'Z']}
                     df_temp = pd.DataFrame(data_temp)
@@ -893,7 +680,7 @@ def process_uploaded_files(uploaded_files, user_info):
                     'namaDebitur', 'npwp', 'alamat', 'ljkKet',
                     'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon',
                     'bakiDebet', 'tunggakanPokok', 'tunggakanBunga', 'denda',
-                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'urutanFile'
+                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                 ]
 
                 if 'tglAktaPendirian' in active_fKP.columns:
@@ -916,43 +703,16 @@ def process_uploaded_files(uploaded_files, user_info):
                     'kualitas': 'Kode Kolektibilitas Saat ini',
                     'kualitasKet': 'Kolektibilitas Saat ini',
                     'tahunBulan24': 'Periode Pelaporan Terakhir',
-                    'urutanFile': 'File ke'
+                    'Urutan file': 'File ke'
                 }
 
                 if 'tglAktaPendirian' in active_fKP.columns:
                     rename_dict['tglAktaPendirian'] = 'Tanggal Lahir/Pendirian'
-                    
-                active_facility_1['periodeData'] = json_posisiDataTerakhir
-                active_facility_1['username'] = username
-                active_facility_1['namaFileUpload'] = nama_file
-                active_facility_1['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(active_facility_1.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(active_facility_1.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_aktif_kredit_pembiayaan ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(active_facility_1.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
 
                 active_facility_1 = active_facility_1.rename(columns=rename_dict)
                 active_facility_1.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
                 active_facility_1 = active_facility_1.reset_index(names='No')
                 active_facility_1['No'] = active_facility_1.index + 1
-                active_facility_1 = active_facility_1.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_af_1 = active_facility_1.to_html(classes="table table-striped", index=False)
 
                 # CLOSED FACILITY (Kondisi == '02')
@@ -961,7 +721,7 @@ def process_uploaded_files(uploaded_files, user_info):
                     'namaDebitur', 'npwp', 'alamat', 'ljkKet',
                     'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon',
                     'bakiDebet', 'tunggakanPokok', 'tunggakanBunga', 'denda',
-                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'urutanFile'
+                    'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                 ]
 
                 if 'tglAktaPendirian' in closed_fKP.columns:
@@ -984,42 +744,15 @@ def process_uploaded_files(uploaded_files, user_info):
                     'kualitas': 'Kode Kolektibilitas Saat ini',
                     'kualitasKet': 'Kolektibilitas Saat ini',
                     'tahunBulan24': 'Periode Pelaporan Terakhir',
-                    'urutanFile': 'File ke'
+                    'Urutan file': 'File ke'
                 }
 
                 if 'tglAktaPendirian' in closed_fKP.columns:
                     rename_dict_closed['tglAktaPendirian'] = 'Tanggal Lahir/Pendirian'
 
-                closed_facility_1['periodeData'] = json_posisiDataTerakhir
-                closed_facility_1['username'] = username
-                closed_facility_1['namaFileUpload'] = nama_file
-                closed_facility_1['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(closed_facility_1.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(closed_facility_1.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_lunas_kredit_pembiayaan ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(closed_facility_1.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
                 closed_facility_1 = closed_facility_1.rename(columns=rename_dict_closed)
                 closed_facility_1 = closed_facility_1.reset_index(names='No')
                 closed_facility_1['No'] = closed_facility_1.index + 1
-                closed_facility_1 = closed_facility_1.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_cf_1 = closed_facility_1.to_html(classes="table table-striped", index=False)
             except Exception as e:
                 table_data_af_1 = f"Error processing active facilities: {e}"
@@ -1050,7 +783,7 @@ def process_uploaded_files(uploaded_files, user_info):
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
                     'tahunBulan24':'Periode Pelaporan Terakhir',
-                    'urutanFile': 'File ke'
+                    'Urutan file': 'File ke'
                 }
                 
                 # Process active facilities
@@ -1062,41 +795,12 @@ def process_uploaded_files(uploaded_files, user_info):
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisLcKet','tujuanLcKet','plafon','nominalLc',
                             'tanggalWanPrestasi', 'kualitas', 'kualitasKet',
-                            'tahunBulan24', 'urutanFile'
+                            'tahunBulan24', 'Urutan file'
                         ]
-                    ])
-                
-                active_facility_2['periodeData'] = json_posisiDataTerakhir
-                active_facility_2['username'] = username
-                active_facility_2['namaFileUpload'] = nama_file
-                active_facility_2['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(active_facility_2.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(active_facility_2.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_aktif_lc ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(active_facility_2.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                    
-                active_facility_2 = active_facility_2.rename(columns=column_rename_map)
+                    ].rename(columns=column_rename_map))
                 active_facility_2.insert(1, 'Nomor Laporan', nomor_laporan)
                 active_facility_2.reset_index(drop=True, inplace=True)
                 active_facility_2.insert(0, 'No', range(1, len(active_facility_2) + 1))
-                active_facility_2 = active_facility_2.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_af_2 = active_facility_2.to_html(classes="table table-striped", index=False)
 
                 # Process closed facilities
@@ -1108,40 +812,11 @@ def process_uploaded_files(uploaded_files, user_info):
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet','jenisLcKet','tujuanLcKet','plafon','nominalLc',
                             'tanggalWanPrestasi', 'kualitas', 'kualitasKet',
-                            'tahunBulan24', 'urutanFile'
+                            'tahunBulan24', 'Urutan file'
                         ]
-                    ])
-                
-                closed_facility_2['periodeData'] = json_posisiDataTerakhir
-                closed_facility_2['username'] = username
-                closed_facility_2['namaFileUpload'] = nama_file
-                closed_facility_2['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(closed_facility_2.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(closed_facility_2.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_lunas_lc ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(closed_facility_2.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
-                closed_facility_2 = closed_facility_2.rename(columns=column_rename_map)
+                    ].rename(columns=column_rename_map))
                 closed_facility_2.reset_index(drop=True, inplace=True)
                 closed_facility_2.insert(0, 'No', range(1, len(closed_facility_2) + 1))
-                closed_facility_2 = closed_facility_2.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_cf_2 = closed_facility_2.to_html(classes="table table-striped", index=False)
             except Exception as e:
                 table_data_af_2 = f"Error processing active facilities: {e}"
@@ -1173,7 +848,7 @@ def process_uploaded_files(uploaded_files, user_info):
                         'kualitas':'Kode Kolektibilitas Saat ini',
                         'kualitasKet':'Kolektibilitas Saat ini',
                         'tahunBulan24':'Periode Pelaporan Terakhir',
-                        'urutanFile': 'File ke'
+                        'Urutan file': 'File ke'
                     }
 
                     # Process active facilities
@@ -1185,41 +860,12 @@ def process_uploaded_files(uploaded_files, user_info):
                                 'namaDebitur','npwp','tglAktaPendirian','alamat',
                                 'ljkKet','jenisGaransiKet','tujuanGaransiKet','plafon',
                                 'nominalBg', 'tanggalWanPrestasi','kualitas',
-                                'kualitasKet','tahunBulan24', 'urutanFile'
+                                'kualitasKet','tahunBulan24', 'Urutan file'
                             ]
-                        ])
-                    
-                    active_facility_3['periodeData'] = json_posisiDataTerakhir
-                    active_facility_3['username'] = username
-                    active_facility_3['namaFileUpload'] = nama_file
-                    active_facility_3['uploadDate'] = current_datetime
-                    
-                    # Ambil nama kolom dari DataFrame
-                    columns = ', '.join(active_facility_3.columns)
-
-                    # Placeholder SQL Server pakai '?'
-                    placeholders = ', '.join(['?'] * len(active_facility_3.columns))
-
-                    # Buat query insert
-                    query = f"""
-                        INSERT INTO slik_fasilitas_aktif_bank_garansi ({columns})
-                        VALUES ({placeholders})
-                    """
-                    # Ubah DataFrame ke list of tuple tanpa index
-                    data = list(active_facility_3.itertuples(index=False, name=None))
-                    
-                    # Jalankan batch insert
-                    if data:
-                        cur.executemany(query, data)
-                        conn.commit()
-                    else:
-                        print("Data kosong!")
-                    
-                    active_facility_3 = active_facility_3.rename(columns=column_rename_map)
+                        ].rename(columns=column_rename_map))
                     active_facility_3.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
                     active_facility_3.reset_index(drop=True, inplace=True)
                     active_facility_3.insert(0, 'No', active_facility_3.index + 1)
-                    active_facility_3 = active_facility_3.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                     table_data_af_3 = active_facility_3.to_html(classes="table table-striped", index=False)
 
                     # Process closed facilities
@@ -1231,40 +877,11 @@ def process_uploaded_files(uploaded_files, user_info):
                                 'namaDebitur','npwp','tglAktaPendirian','alamat',
                                 'ljkKet','jenisGaransiKet','tujuanGaransiKet','plafon',
                                 'nominalBg', 'tanggalWanPrestasi','kualitas',
-                                'kualitasKet','tahunBulan24', 'urutanFile'
+                                'kualitasKet','tahunBulan24', 'Urutan file'
                             ]
-                        ])
-                    
-                    closed_facility_3['periodeData'] = json_posisiDataTerakhir
-                    closed_facility_3['username'] = username
-                    closed_facility_3['namaFileUpload'] = nama_file
-                    closed_facility_3['uploadDate'] = current_datetime
-                
-                    # Ambil nama kolom dari DataFrame
-                    columns = ', '.join(closed_facility_3.columns)
-
-                    # Placeholder SQL Server pakai '?'
-                    placeholders = ', '.join(['?'] * len(closed_facility_3.columns))
-
-                    # Buat query insert
-                    query = f"""
-                        INSERT INTO slik_fasilitas_lunas_bank_garansi ({columns})
-                        VALUES ({placeholders})
-                    """
-                    # Ubah DataFrame ke list of tuple tanpa index
-                    data = list(closed_facility_3.itertuples(index=False, name=None))
-                    
-                    # Jalankan batch insert
-                    if data:
-                        cur.executemany(query, data)
-                        conn.commit()
-                    else:
-                        print("Data kosong!")
-                    
-                    closed_facility_3 = closed_facility_3.rename(columns=column_rename_map)
+                        ].rename(columns=column_rename_map))
                     closed_facility_3.reset_index(drop=True, inplace=True)
                     closed_facility_3.insert(0, 'No', closed_facility_3.index + 1)
-                    closed_facility_3 = closed_facility_3.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                     table_data_cf_3 = closed_facility_3.to_html(classes="table table-striped", index=False)
                 except Exception as e:
                     # Handle any exceptions gracefully
@@ -1291,7 +908,7 @@ def process_uploaded_files(uploaded_files, user_info):
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
                     'tahunBulan24':'Periode Pelaporan Terakhir',
-                    'urutanFile': 'File ke'
+                    'Urutan file': 'File ke'
                 }
 
                 active_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '00']
@@ -1301,41 +918,13 @@ def process_uploaded_files(uploaded_files, user_info):
                         [
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR',
-                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'urutanFile'
+                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                         ]
-                    ])
+                    ].rename(columns=column_rename_map))
                 
-                active_facility_4['periodeData'] = json_posisiDataTerakhir
-                active_facility_4['username'] = username
-                active_facility_4['namaFileUpload'] = nama_file
-                active_facility_4['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(active_facility_4.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(active_facility_4.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_aktif_lainnya ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(active_facility_4.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
-                active_facility_4 = active_facility_4.rename(columns=column_rename_map)
                 active_facility_4.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
                 active_facility_4.reset_index(drop=True, inplace=True)
                 active_facility_4.insert(0, 'No', active_facility_4.index + 1)
-                active_facility_4 = active_facility_4.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_af_4 = active_facility_4.to_html(classes="table table-striped", index=False)
 
                 closed_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '02']
@@ -1345,40 +934,11 @@ def process_uploaded_files(uploaded_files, user_info):
                         [
                             'namaDebitur','npwp','tglAktaPendirian','alamat',
                             'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR',
-                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'urutanFile'
+                            'jumlahHariTunggakan', 'kualitas', 'kualitasKet', 'tahunBulan24', 'Urutan file'
                         ]
-                    ])
-                
-                closed_facility_4['periodeData'] = json_posisiDataTerakhir
-                closed_facility_4['username'] = username
-                closed_facility_4['namaFileUpload'] = nama_file
-                closed_facility_4['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(closed_facility_4.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(closed_facility_4.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_lunas_lainnya ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(closed_facility_4.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
-                closed_facility_4 = closed_facility_4.rename(columns=column_rename_map)
+                    ].rename(columns=column_rename_map))
                 closed_facility_4.reset_index(drop=True, inplace=True)
                 closed_facility_4.insert(0, 'No', closed_facility_4.index + 1)
-                closed_facility_4 = closed_facility_4.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_cf_4 = closed_facility_4.to_html(classes="table table-striped", index=False)
             except Exception as e:
                 table_data_af_4 = f"Error processing active facilities: {e}"
@@ -1406,7 +966,7 @@ def process_uploaded_files(uploaded_files, user_info):
                     'kualitas': 'Kode Kolektibilitas Saat ini',
                     'kualitasKet': 'Kolektibilitas Saat ini',
                     'tahunBulan24': 'Periode Pelaporan Terakhir',
-                    'urutanFile': 'File ke'
+                    'Urutan file': 'File ke'
                 }
 
                 active_fSB = merged_fSB[merged_fSB['kondisi'] == '00']
@@ -1422,41 +982,13 @@ def process_uploaded_files(uploaded_files, user_info):
                             'namaDebitur','npwp','tglAktaPendirian','alamat','ljkKet',
                             'jenisSuratBerharga','nilaiPasar','nilaiPerolehan',
                             'nominalSb','jumlahHariTunggakan','kualitas',
-                            'kualitasKet','tahunBulan24','urutanFile'
+                            'kualitasKet','tahunBulan24','Urutan file'
                         ]
-                    ])
+                    ].rename(columns=column_rename_map))
                 
-                active_facility_5['periodeData'] = json_posisiDataTerakhir
-                active_facility_5['username'] = username
-                active_facility_5['namaFileUpload'] = nama_file
-                active_facility_5['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(active_facility_5.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(active_facility_5.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_aktif_surat_berharga ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(active_facility_5.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
-                active_facility_5 = active_facility_5.rename(columns=column_rename_map)
                 active_facility_5.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
                 active_facility_5.reset_index(drop=True, inplace=True)
                 active_facility_5.insert(0, 'No', active_facility_5.index + 1)
-                active_facility_5 = active_facility_5.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_af_5 = active_facility_5.to_html(classes="table table-striped", index=False)
 
                 closed_fSB = merged_fSB[merged_fSB['kondisi'] == '02']
@@ -1467,40 +999,11 @@ def process_uploaded_files(uploaded_files, user_info):
                             'namaDebitur','npwp','tglAktaPendirian','alamat','ljkKet',
                             'jenisSuratBerharga','nilaiPasar','nilaiPerolehan',
                             'nominalSb','jumlahHariTunggakan','kualitas',
-                            'kualitasKet','tahunBulan24','urutanFile'
+                            'kualitasKet','tahunBulan24','Urutan file'
                         ]
-                    ])
-                
-                closed_facility_5['periodeData'] = json_posisiDataTerakhir
-                closed_facility_5['username'] = username
-                closed_facility_5['namaFileUpload'] = nama_file
-                closed_facility_5['uploadDate'] = current_datetime
-                
-                # Ambil nama kolom dari DataFrame
-                columns = ', '.join(closed_facility_5.columns)
-
-                # Placeholder SQL Server pakai '?'
-                placeholders = ', '.join(['?'] * len(closed_facility_5.columns))
-
-                # Buat query insert
-                query = f"""
-                    INSERT INTO slik_fasilitas_lunas_surat_berharga ({columns})
-                    VALUES ({placeholders})
-                """
-                # Ubah DataFrame ke list of tuple tanpa index
-                data = list(closed_facility_5.itertuples(index=False, name=None))
-                
-                # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
-                    conn.commit()
-                else:
-                    print("Data kosong!")
-                
-                closed_facility_5 = closed_facility_5.rename(columns=column_rename_map)
+                    ].rename(columns=column_rename_map))
                 closed_facility_5.reset_index(drop=True, inplace=True)
                 closed_facility_5.insert(0, 'No', closed_facility_5.index + 1)
-                closed_facility_5 = closed_facility_5.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                 table_data_cf_5 = closed_facility_5.to_html(classes="table table-striped", index=False)
             except Exception as e:
                 table_data_af_5 = f"Error processing active facilities: {e}"
@@ -1540,7 +1043,6 @@ def upload_file():
     
     role_access = session.get('role_access')
     fullname = session.get('fullname')
-    username = session.get('username')
     
     flag = ''
 
@@ -1556,7 +1058,6 @@ def upload_file():
         )
     elif request.method == 'POST':
         flag = request.form.get('flag')
-        nama_file = request.form.get('nama_file')
         # uploaded_file = request.files['file']
         uploaded_files = request.files.getlist('file')
         total_file_size = 0
@@ -1590,11 +1091,9 @@ def upload_file():
         
         # Add task to queue
         user_info = {
-            "username": username,
             "role_access": role_access,
             "fullname": fullname,
-            "flag": flag,
-            "nama_file": nama_file,
+            "flag": flag
         }
         task_queue.put((task_id, temp_files, user_info))
         
@@ -1617,6 +1116,7 @@ def task_status(task_id):
         )
     
     result = task_results[task_id]
+    debug(result)
     
     if result["status"] == "error":
         flash(f"Error: {result['error']}")
@@ -1658,62 +1158,6 @@ def task_status(task_id):
         fullname=fullname
     )
 
-@app.route('/task-status-big-size-file/<task_id>')
-def task_status_big_size_file(task_id):
-    """Check status of a background task"""
-    if task_id not in task_results:
-        return render_template(
-            'processing_big_size.html',
-            task_id=task_id,
-            role_access=session.get('role_access'),
-            fullname=session.get('fullname')
-        )
-    
-    result = task_results[task_id]
-    
-    if result["status"] == "error":
-        flash(f"Error: {result['error']}")
-        return redirect(url_for('upload_big_size_file'))
-    
-    # Render the results using the processed data
-    processed_data = result["result"]
-    role_access = session.get('role_access')
-    fullname = session.get('fullname')
-    
-    periodeData_filter = request.args.get('periodeData', '')
-    username_filter = request.args.get('username', '')
-    namaFileUpload_filter = request.args.get('namaFileUpload', '')
-
-    # Ambil semua data
-    all_data = get_data_for_display()
-
-    # Apply filter
-    filtered_data = all_data
-    if periodeData_filter:
-        filtered_data = [item for item in filtered_data if item['periodeData'] == periodeData_filter]
-    if username_filter:
-        filtered_data = [item for item in filtered_data if item['username'] == username_filter]
-    if namaFileUpload_filter:
-        filtered_data = [item for item in filtered_data if item['namaFileUpload'] == namaFileUpload_filter]
-    
-    # Dropdown filter options
-    filter_options = get_filter_options()
-    
-    flash("File berhasil diupload!")
-    
-    return render_template(
-        'upload_big_size.html',
-        filter_options=filter_options,
-        selected_filters={
-            'periodeData': periodeData_filter,
-            'username': username_filter,
-            'namaFileUpload': namaFileUpload_filter
-        },
-        flags=FLAGS,
-        role_access=role_access,
-        fullname=fullname
-    )
-
 @app.route('/api/task-status/<task_id>', methods=['GET'])
 def api_task_status(task_id):
     """API endpoint to check task status"""
@@ -1726,357 +1170,135 @@ def api_task_status(task_id):
     
     return jsonify({"status": "completed", "redirect": url_for('task_status', task_id=task_id)})
 
-@app.route('/api/task-status-big-size-file/<task_id>', methods=['GET'])
-def api_task_status_big_size_file(task_id):
-    """API endpoint to check task status"""
-    if task_id not in task_results:
-        return jsonify({"status": "processing"})
-    
-    result = task_results[task_id]
-    if result["status"] == "error":
-        return jsonify({"status": "error", "message": result["error"]})
-    
-    return jsonify({"status": "completed", "redirect": url_for('task_status_big_size_file', task_id=task_id)})
-
+# Download Route
 @app.route('/download')
 def download_file():
+    
+    df = pd.DataFrame()
+    
+    global uploaded_data
+    global uploaded_data_2
+    global uploaded_data_3
+    global uploaded_data_2
+    global uploaded_data_3
+    global uploaded_data_4
+    global uploaded_data_5
+    global uploaded_data_6
+    global uploaded_data_7
+    global uploaded_data_8
+    global uploaded_data_9
+    global uploaded_data_10
+    global uploaded_data_11
+    
+    global flag
+    
+    global active_facility_1
+    global active_facility_2
+    global active_facility_3
+    global active_facility_4
+    global active_facility_5
+
+    global closed_facility_1
+    global closed_facility_2
+    global closed_facility_3
+    global closed_facility_4
+    global closed_facility_5
+
     if not session.get('data_available') or uploaded_data is None:
         return '''
                 <script>
                     alert("No File data to Download!");
-                    window.location.href = "/upload";
+                    window.location.href = "/upload"; // Redirect setelah alert
                 </script>
             '''
 
-    # Prepare directory and filename
+    # Save DataFrame to Excel file
     current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
     directory = os.path.join('..', 'smi-slikreader/file_download')
-    if not os.path.exists(directory):
-        os.makedirs(directory)
     output_file = os.path.join(directory, f'file_{current_datetime}.xlsx')
     
-    # Define facility dataframes with their sheet names
-    facilities = {
-        'fAktifKreditPembiayaan': active_facility_1,
-        'fLunasKreditPembiayaan': closed_facility_1,
-        'fAktifLC': active_facility_2,
-        'fLunasLC': closed_facility_2,
-        'fAktifBankGaransi': active_facility_3,
-        'fLunasBankGaransi': closed_facility_3,
-        'fAktifLainnya': active_facility_4,
-        'fLunasLainnya': closed_facility_4,
-        'fAktifSuratBerharga': active_facility_5,
-        'fLunasSuratBerharga': closed_facility_5
-    }
+    if not os.path.exists(directory):
+        os.makedirs(directory)
     
-    # Write to Excel file
     with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-        for sheet_name, df in facilities.items():
-            # Write empty dataframe if None
-            if df is None:
-                pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        """
+        uploaded_data.to_excel(writer, sheet_name='header', index=False)
+        if flag == "Individual":
+            uploaded_data_2.to_excel(writer, sheet_name='individual', index=False)
+        elif flag == "Perusahaan":
+            uploaded_data_2.to_excel(writer, sheet_name='perusahaan', index=False)
+        uploaded_data_3.to_excel(writer, sheet_name='paramPencarian', index=False)
+        uploaded_data_4.to_excel(writer, sheet_name='dataPokokDebitur', index=False)
+        uploaded_data_5.to_excel(writer, sheet_name='ringkasanFasilitas', index=False)
+        if uploaded_data_6 is None:
+            upload_data_6 = pd.DataFrame()
+        else:
+            uploaded_data_6.to_excel(writer, sheet_name='fasilitasKreditPembiayaan', index=False)
+        if uploaded_data_7 is None:
+            uploaded_data_7 = pd.DataFrame()
+        else:
+            uploaded_data_7.to_excel(writer, sheet_name='fasilitasLC', index=False)
+        if uploaded_data_8 is None:
+            uploaded_data_8 = pd.DataFrame()
+        else:        
+            uploaded_data_8.to_excel(writer, sheet_name='fasilitasGaransi', index=False)
+        if uploaded_data_9 is None:
+            uploaded_data_9 = pd.DataFrame()
+        else:
+            uploaded_data_9.to_excel(writer, sheet_name='fasilitasFasilitasLain', index=False)
+        if uploaded_data_10 is None:
+            uploaded_data_10 = pd.DataFrame()
+        else:
+            uploaded_data_10.to_excel(writer, sheet_name='fasilitasSuratBerharga', index=False)
+        if uploaded_data_11 is None:
+            uploaded_data_11 = pd.DataFrame()
+        else:
+            uploaded_data_11.to_excel(writer, sheet_name='pengurusPemilik', index=False)
+        """
+        if active_facility_1 is None:
+            active_facility_1 = pd.DataFrame()
+        else:
+            active_facility_1.to_excel(writer, sheet_name='fAktifKreditPembiayaan', index=False)
+        if closed_facility_1 is None:
+            closed_facility_1 = pd.DataFrame()
+        else:
+            closed_facility_1.to_excel(writer, sheet_name='fLunasKreditPembiayaan', index=False)
+        if active_facility_2 is None:
+            active_facility_2 = pd.DataFrame()
+        else:
+            active_facility_2.to_excel(writer, sheet_name='fAktifLC', index=False)
+        if closed_facility_2 is None:
+            closed_facility_2 = pd.DataFrame()
+        else:
+            closed_facility_2.to_excel(writer, sheet_name='fLunasLC', index=False)
+        if active_facility_3 is None:
+            active_facility_3 = pd.DataFrame()
+        else:
+            active_facility_3.to_excel(writer, sheet_name='fAktifBankGaransi', index=False)
+        if closed_facility_3 is None:
+            closed_facility_3 = pd.DataFrame()
+        else:
+            closed_facility_3.to_excel(writer, sheet_name='fLunasBankGaransi', index=False)
+        if active_facility_4 is None:
+            active_facility_4 = pd.DataFrame()
+        else:
+            active_facility_4.to_excel(writer, sheet_name='fAktifLainnya', index=False)
+        if closed_facility_4 is None:
+            closed_facility_4 = pd.DataFrame()
+        else:
+            closed_facility_4.to_excel(writer, sheet_name='fLunasLainnya', index=False)
+        if active_facility_5 is None:
+            active_facility_5 = pd.DataFrame()
+        else:
+            active_facility_5.to_excel(writer, sheet_name='fAktifSuratBerharga', index=False)
+        if closed_facility_5 is None:
+            closed_facility_5 = pd.DataFrame()
+        else:
+            closed_facility_5.to_excel(writer, sheet_name='fLunasSuratBerharga', index=False)
+
 
     return send_file(output_file, as_attachment=True)
-
-# Daftar tabel yang akan diekspor
-tables = [
-    "slik_fasilitas_aktif_bank_garansi",
-    "slik_fasilitas_aktif_kredit_pembiayaan",
-    "slik_fasilitas_aktif_lainnya",
-    "slik_fasilitas_aktif_lc",
-    "slik_fasilitas_aktif_surat_berharga",
-    "slik_fasilitas_lunas_bank_garansi",
-    "slik_fasilitas_lunas_kredit_pembiayaan",
-    "slik_fasilitas_lunas_lainnya",
-    "slik_fasilitas_lunas_lc",
-    "slik_fasilitas_lunas_surat_berharga"
-]
-
-def get_data_for_display():
-    conn = get_db_connection()
-    data = []
-    
-    # Use a single query with UNION ALL to combine results and GROUP BY
-    query = """
-    SELECT periodeData, username, namaFileUpload, MAX(uploadDate) as uploadDate
-    FROM (
-    """
-    
-    # Build the UNION ALL query for all tables
-    for i, table in enumerate(tables):
-        query += f"SELECT periodeData, username, namaFileUpload, uploadDate FROM {table}"
-        if i < len(tables) - 1:
-            query += " UNION ALL "
-    
-    query += """
-    ) AS combined_data
-    GROUP BY periodeData, username, namaFileUpload
-    ORDER BY MAX(uploadDate) DESC
-    """
-    
-    # Execute the query and convert to list of dictionaries
-    df = pd.DataFrame()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        
-        # Get column names from cursor description
-        columns = [column[0] for column in cursor.description]
-        
-        # Fetch all rows
-        rows = cursor.fetchall()
-        
-        # Create DataFrame from the fetched data
-        df = pd.DataFrame.from_records(rows, columns=columns)
-        data = df.to_dict(orient='records')
-    except Exception as e:
-        print(f"Error getting display data: {str(e)}")
-    finally:
-        conn.close()
-        
-    return data
-
-def get_filter_options():
-    """Get unique values for filter dropdowns"""
-    conn = get_db_connection()
-    options = {
-        'periodeData': set(),
-        'username': set(),
-        'namaFileUpload': set()
-    }
-    
-    try:
-        cursor = conn.cursor()
-        
-        # Get unique periodeData values
-        query = """
-        SELECT DISTINCT periodeData FROM (
-        """
-        for i, table in enumerate(tables):
-            query += f"SELECT periodeData FROM {table}"
-            if i < len(tables) - 1:
-                query += " UNION ALL "
-        query += ") AS combined_data ORDER BY periodeData"
-        cursor.execute(query)
-        options['periodeData'] = [row[0] for row in cursor.fetchall()]
-        
-        # Get unique username values
-        query = """
-        SELECT DISTINCT username FROM (
-        """
-        for i, table in enumerate(tables):
-            query += f"SELECT username FROM {table}"
-            if i < len(tables) - 1:
-                query += " UNION ALL "
-        query += ") AS combined_data ORDER BY username"
-        cursor.execute(query)
-        options['username'] = [row[0] for row in cursor.fetchall()]
-        
-        # Get unique namaFileUpload values
-        query = """
-        SELECT DISTINCT namaFileUpload FROM (
-        """
-        for i, table in enumerate(tables):
-            query += f"SELECT namaFileUpload FROM {table}"
-            if i < len(tables) - 1:
-                query += " UNION ALL "
-        query += ") AS combined_data ORDER BY namaFileUpload"
-        cursor.execute(query)
-        options['namaFileUpload'] = [row[0] for row in cursor.fetchall()]
-        
-    except Exception as e:
-        print(f"Error getting filter options: {str(e)}")
-    finally:
-        conn.close()
-        
-    return options
-
-# Fungsi untuk mengekspor data tabel ke Excel
-def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
-    conn = get_db_connection()
-    
-    # Convert to datetime object
-    try:
-        uploadDate_dt = datetime.strptime(uploadDate, '%Y-%m-%d %H:%M:%S.%f')
-    except ValueError:
-        # Try parsing without microseconds if the above fails
-        uploadDate_dt = datetime.strptime(uploadDate, '%Y-%m-%d %H:%M:%S')
-    
-    # Convert back to string in a simpler format
-    uploadDate_str = uploadDate_dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    sheet_name_mapping = {
-        'slik_fasilitas_aktif_bank_garansi': 'Fasilitas Aktif Bank Garansi',
-        'slik_fasilitas_aktif_kredit_pembiayaan': 'Fasilitas Aktif Kredit Pembiayaan',
-        'slik_fasilitas_aktif_lainnya': 'Fasilitas Aktif Lainnya',
-        'slik_fasilitas_aktif_lc': 'Fasilitas Aktif LC',
-        'slik_fasilitas_aktif_surat_berharga': 'Fasilitas Aktif Surat Berharga',
-        'slik_fasilitas_lunas_bank_garansi': 'Fasilitas Lunas Bank Garansi',
-        'slik_fasilitas_lunas_kredit_pembiayaan': 'Fasilitas Lunas Kredit Pembiayaan',
-        'slik_fasilitas_lunas_lainnya': 'Fasilitas Lunas Lainnya',
-        'slik_fasilitas_lunas_lc': 'Fasilitas Lunas LC',
-        'slik_fasilitas_lunas_surat_berharga': 'Fasilitas Lunas Surat Berharga'
-    }
-    
-    # Create Excel workbook in memory
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        for table in tables:
-            # Use cursor to execute the query instead of pd.read_sql
-            cursor = conn.cursor()
-            query = f"""
-            SELECT * FROM {table} 
-            WHERE periodeData = ? AND username = ? AND namaFileUpload = ? AND CONVERT(VARCHAR(19), uploadDate, 120) = ?
-            """
-            cursor.execute(query, (periodeData, username, namaFileUpload, uploadDate_str))
-            
-            # Get column names from cursor description
-            columns = [column[0] for column in cursor.description]
-            
-            # Fetch all rows
-            rows = cursor.fetchall()
-            
-            # Create DataFrame from the fetched data
-            df = pd.DataFrame.from_records(rows, columns=columns)
-            
-            # Remove the columns we don't want in the output
-            columns_to_remove = ['periodeData', 'username', 'namaFileUpload', 'uploadDate']
-            df = df.drop(columns=[col for col in columns_to_remove if col in df.columns], errors='ignore')
-            
-            # Rename 'id' column to 'No' if it exists
-            if 'id' in df.columns:
-                df = df.rename(columns={'id': 'No'})
-            
-            # Ensure sheet_name doesn't exceed Excel's 31 character limit
-            sheet_name = sheet_name_mapping.get(table, table)[:31]
-            
-            # Write DataFrame to Excel sheet
-            if not df.empty:
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                # Create empty sheet with the name
-                pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
-                
-    # Close the connection
-    conn.close()
-    
-    # Reset the pointer to the beginning of the BytesIO object
-    output.seek(0)
-    return output
-    
-@app.route('/upload-big-size', methods=['GET', 'POST'])
-def upload_big_size_file():
-    if 'username' not in session:
-        flash("Please log in first.")
-        return redirect(url_for('login'))
-
-    role_access = session.get('role_access')
-    fullname = session.get('fullname')
-    username = session.get('username')
-
-    if request.method == 'GET':
-        # Cek apakah ini filter search?
-        periodeData_filter = request.args.get('periodeData', '')
-        username_filter = request.args.get('username', '')
-        namaFileUpload_filter = request.args.get('namaFileUpload', '')
-
-        # Ambil semua data
-        all_data = get_data_for_display()
-
-        # Apply filter
-        filtered_data = all_data
-        if periodeData_filter:
-            filtered_data = [item for item in filtered_data if item['periodeData'] == periodeData_filter]
-        if username_filter:
-            filtered_data = [item for item in filtered_data if item['username'] == username_filter]
-        if namaFileUpload_filter:
-            filtered_data = [item for item in filtered_data if item['namaFileUpload'] == namaFileUpload_filter]
-
-        # Dropdown filter options
-        filter_options = get_filter_options()
-
-        session['data_available'] = False
-
-        return render_template(
-            'upload_big_size.html',
-            data=filtered_data,
-            filter_options=filter_options,
-            selected_filters={
-                'periodeData': periodeData_filter,
-                'username': username_filter,
-                'namaFileUpload': namaFileUpload_filter
-            },
-            flags=FLAGS,
-            role_access=role_access,
-            fullname=fullname
-        )
-
-    elif request.method == 'POST':
-        flag = request.form.get('flag')
-        nama_file = request.form.get('nama_file')
-        uploaded_files = request.files.getlist('file')
-
-        # Hitung total size
-        total_file_size = 0
-        for file in uploaded_files:
-            file_size = len(file.read())
-            file.seek(0)  # Reset posisi file untuk nanti dibaca lagi
-            total_file_size += file_size
-
-        if total_file_size > MAX_FILE_BIG_SIZE:
-            return '''
-                <script>
-                    alert("Total file yang diupload terlalu besar. Maksimum 110MB!");
-                    window.location.href = "/upload-big-size";
-                </script>
-            '''
-
-        # Generate unique task id
-        task_id = str(uuid.uuid4())
-
-        # Simpan file dalam bentuk bytes
-        temp_files = []
-        for file in uploaded_files:
-            if file and file.filename:
-                file_content = file.read()
-                temp_files.append({
-                    'filename': file.filename,
-                    'content': file_content
-                })
-
-        # Simpan task ke queue
-        user_info = {
-            "username": username,
-            "role_access": role_access,
-            "fullname": fullname,
-            "flag": flag,
-            "nama_file": nama_file,
-        }
-        task_queue.put((task_id, temp_files, user_info))
-
-        session['task_id'] = task_id
-        session['data_available'] = True
-
-        flash("Files are being processed in the background.")
-        return redirect(url_for('task_status_big_size_file', task_id=task_id))
-
-@app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
-def download_excel(periodeData, username, namaFileUpload, uploadDate):
-    try:
-        # Menyiapkan file Excel berdasarkan filter
-        excel_file = export_to_excel(periodeData, username, namaFileUpload, uploadDate)
-        
-        # Mengirimkan file untuk diunduh
-        return send_file(
-            excel_file,
-            as_attachment=True,
-            download_name=f"{periodeData}_{username}_{namaFileUpload}_{uploadDate}.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
