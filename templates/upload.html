@@ -21,7 +21,7 @@
             <div class="mb-3">
                 <div class="d-flex align-items-center">
                     <label for="file" class="form-label me-2">Select JSON File(s)</label>
-                    <small class="text-danger">*Maksimal size file upload 110MB</small> 
+                    <small class="text-danger">*Maksimal size file upload 10MB</small> 
                 </div>
                 <input type="file" name="file" class="form-control" accept=".txt" multiple required>
             </div>
@@ -31,6 +31,9 @@
             </div>
             <button type="submit" class="btn btn-primary">Upload</button>    
         </form>
+        <div class="mt-1 d-flex justify-content-center">
+            <a href="/upload-big-size" class="btn btn-secondary" style="width: 100%;">Upload File lebih dari 10MB</a>
+        </div>
         
         {% with messages = get_flashed_messages() %}
             {% if messages %}
