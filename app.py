@@ -1316,7 +1316,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     'tujuanGaransiKet':'Tujuan Garansi',
                     'plafon':'Plafon',
                     'nominalBg':'Oustanding/Baki Debet',
-                    'valutaKode': 'Valuta',
+                    'kodeValuta': 'Valuta',
                     'tanggalWanPrestasi':'Tanggal Wan prestasi',
                     'kualitas':'Kode Kolektibilitas Saat ini',
                     'kualitasKet':'Kolektibilitas Saat ini',
@@ -1336,9 +1336,9 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 ]
                 
                 # Cek dan tambahkan kolom valuta jika ada
-                if 'valutaKode' in active_fGar.columns:
-                    # Sisipkan valutaKode setelah nominalBg (posisi ke-9)
-                    active_columns.insert(9, 'valutaKode')
+                if 'kodeValuta' in active_fGar.columns:
+                    # Sisipkan kodeValuta setelah nominalBg (posisi ke-9)
+                    active_columns.insert(9, 'kodeValuta')
                 
                 # Buat DataFrame dengan kolom yang sudah termasuk valuta jika ada
                 active_facility_3 = active_fGar[active_columns]
@@ -1970,14 +1970,113 @@ def download_file():
         'fLunasSuratBerharga': closed_facility_5
     }
     
+    # Create a new dataframe that combines all active facilities
+    all_active_facilities = []
+    active_facility_dfs = {
+        'Kredit/Pembiayaan': active_facility_1,
+        'LC': active_facility_2,
+        'Bank Garansi': active_facility_3,
+        'Lainnya': active_facility_4,
+        'Surat Berharga': active_facility_5
+    }
+    
+    # Field mappings for each facility type
+    field_mappings = {
+        'Kredit/Pembiayaan': {'jenis': 'Jenis Kredit/Pembiayaan'},
+        'LC': {'jenis': 'Jenis L/C'},
+        'Bank Garansi': {'jenis': 'Jenis Garansi'},
+        'Lainnya': {'jenis': 'Jenis Fasilitas'},
+        'Surat Berharga': {'jenis': 'Jenis Surat Berharga'}
+    }
+    
+    for facility_type, df in active_facility_dfs.items():
+        if df is not None and not df.empty:
+            df_copy = df.copy()
+            
+            # Ensure required columns exist
+            required_columns = [
+                'Nama Debitur/Calon Debitur', 
+                'Nomor Laporan', 
+                'Nomor Identitas', 
+                'Kreditur/Pelapor',
+                'Kode Kolektibilitas Saat ini',
+                'Kolektibilitas Saat ini'
+            ]
+            
+            # Add missing columns with empty values if needed
+            for col in required_columns:
+                if col not in df_copy.columns:
+                    df_copy[col] = ''
+            
+            # Map the specific "Jenis" field based on facility type
+            jenis_field = field_mappings[facility_type]['jenis']
+            if jenis_field in df_copy.columns:
+                df_copy['Jenis'] = df_copy[jenis_field]
+            else:
+                df_copy['Jenis'] = facility_type
+                
+            # Select only the required columns
+            selected_cols = [
+                'Nama Debitur/Calon Debitur', 
+                'Nomor Laporan', 
+                'Nomor Identitas', 
+                'Kreditur/Pelapor',
+                'Jenis',
+                'Kode Kolektibilitas Saat ini',
+                'Kolektibilitas Saat ini'
+            ]
+            
+            # Only keep columns that exist in the dataframe
+            available_cols = [col for col in selected_cols if col in df_copy.columns]
+            df_subset = df_copy[available_cols]
+            
+            all_active_facilities.append(df_subset)
+    
+    # Combine all active facilities into one dataframe
+    combined_active_facilities = pd.DataFrame()
+    if all_active_facilities:
+        combined_active_facilities = pd.concat(all_active_facilities, ignore_index=True)
+        
+        # Add a reset 'No' column starting from 1
+        combined_active_facilities.insert(0, 'No', range(1, len(combined_active_facilities) + 1))
+    
+    # Add the combined active facilities to the dictionary
+    facilities['SemuaFasilitasAktif'] = combined_active_facilities
+    
     # Write to Excel file
     with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-        for sheet_name, df in facilities.items():
-            # Write empty dataframe if None
-            if df is None:
-                pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
+        # Write the combined active facilities sheet first
+        if 'SemuaFasilitasAktif' in facilities:
+            df = facilities['SemuaFasilitasAktif']
+            if df is not None and not df.empty:
+                # Ensure the specific columns are in the right order
+                columns_order = [
+                    'No',
+                    'Nama Debitur/Calon Debitur',
+                    'Nomor Laporan',
+                    'Nomor Identitas',
+                    'Kreditur/Pelapor',
+                    'Jenis',
+                    'Kode Kolektibilitas Saat ini',
+                    'Kolektibilitas Saat ini'
+                ]
+                
+                # Only include columns that exist in the dataframe
+                final_columns = [col for col in columns_order if col in df.columns]
+                df = df[final_columns]
+                
+                df.to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
             else:
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                pd.DataFrame(columns=columns_order).to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
+        
+        # Write the rest of the sheets
+        for sheet_name, df in facilities.items():
+            if sheet_name != 'SemuaFasilitasAktif':  # Skip as it's already written
+                # Write empty dataframe if None
+                if df is None:
+                    pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
+                else:
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     return send_file(output_file, as_attachment=True)
 
