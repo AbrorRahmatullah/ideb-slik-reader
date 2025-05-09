@@ -7,10 +7,15 @@ import threading
 import queue
 import uuid
 import traceback
+import base64
+import pyodbc
+import urllib
 
 from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
+from queue import Queue
+from werkzeug.datastructures import FileStorage
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
@@ -57,25 +62,50 @@ FLAGS = ["Individual", "Perusahaan"]
 # Create a global task queue and task results dictionary
 task_queue = queue.Queue()
 task_results = {}
+task_progress = {}
+conn = get_db_connection()
+cur = conn.cursor()
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-MAX_FILE_BIG_SIZE = 110 * 1024 * 1024  # 10MB
+MAX_FILE_BIG_SIZE = 200 * 1024 * 1024  # 10MB
 
-# Background worker function
+# --- Save to DB ---
+def save_file_metadata_to_db(periodeData, namaFileUpload, fileContentBase64, username, fullname, roleAccess, uploadDate):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        query = """
+            INSERT INTO slik_uploader (periodeData, namaFileUpload, fileContentBase64, username, fullname, roleAccess, uploadDate)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        cursor.execute(query, (periodeData, namaFileUpload, fileContentBase64, username, fullname, roleAccess, uploadDate))
+        conn.commit()
+
+    except Exception as e:
+        print(f"Error saving to DB: {e}")
+        traceback.print_exc()
+    finally:
+        cursor.close()
+        conn.close()
+
+# --- Background Worker ---
 def process_files_worker():
     while True:
-        task = task_queue.get()
-        if task is None:  # Sentinel value to stop worker
-            break
-            
-        task_id, file_data_list, user_info = task
+        try:
+            task_id, files, user_info = task_queue.get(timeout=1)
+        except queue.Empty:
+            continue
         
         try:
-            # Convert the file data back to file-like objects
-            from io import BytesIO
-            from werkzeug.datastructures import FileStorage
-            
+            bulan_dict = {
+                    1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
+                    5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
+                    9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+                }
+            # Konversi files (yang berisi raw content) menjadi FileStorage objects
+            periode_data = None
             uploaded_files = []
-            for file_data in file_data_list:
+            for file_data in files:
                 # Create BytesIO object with the content
                 file_stream = BytesIO(file_data['content'])
                 # Create a FileStorage object with this stream
@@ -85,15 +115,99 @@ def process_files_worker():
                     name='file'
                 )
                 uploaded_files.append(file_obj)
+                
+            # Set a flag to track if we've already processed a file successfully
+            first_successful_file = True
+
+            # Process files to extract period data from first valid file
+            for idx, uploaded_file in enumerate(uploaded_files):  # Fixed: enumerate returns (index, item)
+                try:
+                    file_content = uploaded_file.stream.read()
+                    
+                    # Flag to track if current file was processed successfully
+                    file_processed = False
+                    
+                    # Try different encodings in order of likelihood
+                    for encoding in ['utf-8', 'latin-1', 'utf-16', 'ascii']:
+                        try:
+                            # Decode and clean in one step
+                            content = re.sub(r'[^\x20-\x7E\t\r\n]', '', 
+                                        file_content.decode(encoding, errors='strict'))
+                            
+                            # Parse JSON directly
+                            data = json.loads(content)
+                            
+                            if 'perusahaan' in data and 'posisiDataTerakhir' in data['perusahaan']:
+                                posisiDataTerakhir = data['perusahaan']['posisiDataTerakhir']
+                                date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
+                                json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
+                                
+                                # Only set periode_data if it's still None or if this is the first successful file
+                                if periode_data is None or first_successful_file:
+                                    periode_data = json_posisiDataTerakhir
+                                    first_successful_file = False
+                                
+                                # Mark as processed successfully
+                                file_processed = True
+                                break  # Exit encoding loop since we found a working encoding
+                                
+                        except UnicodeDecodeError:
+                            # Try next encoding
+                            continue
+                        except json.JSONDecodeError as e:
+                            print(f"JSON error in file {uploaded_file.filename}: {str(e)}")
+                            break
+                        except KeyError as e:
+                            print(f"Missing key in JSON structure: {str(e)}")
+                            break
+                        except Exception as e:
+                            print(f"Unexpected error: {str(e)}")
+                            break
+                            
+                    # Reset the file stream position for potential future reads
+                    uploaded_file.stream.seek(0)
+                    
+                    if not file_processed:
+                        print(f"Warning: Could not process file {uploaded_file.filename}")
+                        
+                except Exception as e:
+                    print(f"Error processing file: {str(e)}")
+
+            # Ensure periode_data is set to a default value if no files were processed successfully
+            if periode_data is None:
+                periode_data = "Unknown Period"  # Or any other default value
+
+            # Simpan semua file metadata ke database
+            for file in files:
+                raw_content = file['content']
+                encoded_content = base64.b64encode(raw_content).decode('utf-8')
+                uploaded_at = datetime.now()
+
+                save_file_metadata_to_db(
+                    periodeData=periode_data,  # Using the extracted period data for all files
+                    namaFileUpload=user_info.get("nama_file"),
+                    fileContentBase64=encoded_content,
+                    username=user_info.get("username"),
+                    fullname=user_info.get("fullname"),
+                    roleAccess=user_info.get("role_access"),
+                    uploadDate=uploaded_at
+                )
             
-            result = process_uploaded_files(uploaded_files, user_info)
+            # Log start of processing
+            app.logger.info(f"Processing task {task_id} for nama file {user_info.get('nama_file')}")
+            
+            # Update progress to 10%
+            task_progress[task_id]['progress'] = 10
+            
+            # Panggil fungsi process_uploaded_files dengan FileStorage objects
+            result = process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at)
             task_results[task_id] = {"status": "completed", "result": result}
         except Exception as e:
             task_results[task_id] = {"status": "error", "error": str(e)}
-        finally:
-            task_queue.task_done()
+        task_queue.task_done()
 
 def escape_sql(val):
+    """Mencegah SQL Injection dengan mengganti ' menjadi ''."""
     return val.replace("'", "''") if isinstance(val, str) else val
 
 # Start background worker thread
@@ -175,6 +289,7 @@ def login():
             session['username'] = username
             session['fullname'] = fullname
             session['role_access'] = user[1]
+            session['upload_done'] = True
             return redirect(url_for('upload_file'))
         else:
             flash("Invalid username or password.")
@@ -272,7 +387,7 @@ def insert_data(cursor, table_name, data_item, columns_to_remove=None, extra_col
         traceback.print_exc()
         print(f"Item: {data_item}")
 
-def process_uploaded_files(uploaded_files, user_info):
+def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at):
     global uploaded_data
     global uploaded_data_2
     global uploaded_data_3
@@ -543,8 +658,12 @@ def process_uploaded_files(uploaded_files, user_info):
     username = user_info['username']
     nama_file = user_info['nama_file']
     current_datetime = datetime.now()
+    total_files = len(files)
     
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
+        progress = 10 + int(70 * (idx / total_files))
+        task_progress[task_id]['progress'] = progress
+        
         if uploaded_file and uploaded_file.filename.endswith('.txt'):
             try:
                 encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
@@ -878,6 +997,8 @@ def process_uploaded_files(uploaded_files, user_info):
         if list_uploaded_data_10
         else "No data available."
     )
+    
+    task_progress[task_id]['progress'] = 90
     
     if len(list_uploaded_data_6) > 0:
         missing_ljk = [i for i, df in enumerate(list_uploaded_data_6) if 'ljk' not in df.columns]
@@ -1505,6 +1626,20 @@ def process_uploaded_files(uploaded_files, user_info):
             except Exception as e:
                 table_data_af_5 = f"Error processing active facilities: {e}"
                 table_data_cf_5 = f"Error processing closed facilities: {e}"
+    
+    # Update progress to 100% (completed)
+    task_progress[task_id]['progress'] = 100
+    task_progress[task_id]['status'] = 'completed'
+    
+    # Store result
+    task_results[task_id] = {
+        "status": "success",
+        "data": list_table_data
+    }
+    
+    # Log completion
+    app.logger.info(f"Task {task_id} completed successfully")
+    
     # Return all processed data
     return {
         "table_data": table_data,
@@ -1533,7 +1668,6 @@ def process_uploaded_files(uploaded_files, user_info):
 
 @app.route('/upload', methods=['GET', 'POST'])
 def upload_file():
-
     if 'username' not in session:
         flash("Please log in first.")
         return redirect(url_for('login'))
@@ -1543,8 +1677,6 @@ def upload_file():
     username = session.get('username')
     
     flag = ''
-
-    # nomor_laporan = ''
             
     if request.method == 'GET':
         session['data_available'] = False
@@ -1557,7 +1689,6 @@ def upload_file():
     elif request.method == 'POST':
         flag = request.form.get('flag')
         nama_file = request.form.get('nama_file')
-        # uploaded_file = request.files['file']
         uploaded_files = request.files.getlist('file')
         total_file_size = 0
         
@@ -1569,13 +1700,16 @@ def upload_file():
         if total_file_size > MAX_FILE_SIZE:
             return '''
                 <script>
-                    alert("Total file yang diupload terlalu besar. Maksimum 110MB!");
+                    alert("Total file yang diupload terlalu besar. Maksimum 200MB!");
                     window.location.href = "/upload"; // Redirect setelah alert
                 </script>
             '''
         
         # Generate a unique task ID
         task_id = str(uuid.uuid4())
+        
+        # Initialize the task in the progress tracker
+        task_progress[task_id] = {'progress': 0}
         
         # Save files as bytes
         temp_files = []
@@ -1602,141 +1736,139 @@ def upload_file():
         session['task_id'] = task_id
         session['data_available'] = True
         
-        flash("Files are being processed in the background.")
+        # Redirect to task status page
         return redirect(url_for('task_status', task_id=task_id))
 
 @app.route('/task-status/<task_id>')
 def task_status(task_id):
     """Check status of a background task"""
-    if task_id not in task_results:
+    # Initialize task_progress if task_id doesn't exist (handles race condition)
+    if task_id not in task_progress:
+        task_progress[task_id] = {'progress': 0}
+    
+    # Check if task has completed results
+    if task_id in task_results:
+        result = task_results[task_id]
+        
+        if result["status"] == "error":
+            flash(f"Error: {result['error']}")
+            return redirect(url_for('upload_file'))
+        
+        # Render the results using the processed data
+        processed_data = result["result"]
+        role_access = session.get('role_access')
+        fullname = session.get('fullname')
+        
+        flash("File berhasil diupload!")
+    
         return render_template(
-            'processing.html',
-            task_id=task_id,
-            role_access=session.get('role_access'),
-            fullname=session.get('fullname')
+            'upload.html',
+            table_data=processed_data.get("table_data"),
+            list_table_data=processed_data.get("list_table_data"),
+            table_data_2=processed_data.get("table_data_2"),
+            table_data_3=processed_data.get("table_data_3"),
+            table_data_4=processed_data.get("table_data_4"),
+            table_data_5=processed_data.get("table_data_5"),
+            table_data_6=processed_data.get("table_data_6"),
+            table_data_7=processed_data.get("table_data_7"),
+            table_data_8=processed_data.get("table_data_8"),
+            table_data_9=processed_data.get("table_data_9"),
+            table_data_10=processed_data.get("table_data_10"),
+            table_data_11=processed_data.get("table_data_11"), 
+            flags=FLAGS,
+            table_data_af_1=processed_data.get("table_data_af_1"), 
+            table_data_af_2=processed_data.get("table_data_af_2"), 
+            table_data_af_3=processed_data.get("table_data_af_3"), 
+            table_data_af_4=processed_data.get("table_data_af_4"), 
+            table_data_af_5=processed_data.get("table_data_af_5"), 
+            table_data_cf_1=processed_data.get("table_data_cf_1"), 
+            table_data_cf_2=processed_data.get("table_data_cf_2"), 
+            table_data_cf_3=processed_data.get("table_data_cf_3"), 
+            table_data_cf_4=processed_data.get("table_data_cf_4"), 
+            table_data_cf_5=processed_data.get("table_data_cf_5"),
+            role_access=role_access,
+            fullname=fullname
         )
-    
-    result = task_results[task_id]
-    
-    if result["status"] == "error":
-        flash(f"Error: {result['error']}")
-        return redirect(url_for('upload_file'))
-    
-    # Render the results using the processed data
-    processed_data = result["result"]
-    role_access = session.get('role_access')
-    fullname = session.get('fullname')
-    
-    flash("File berhasil diupload!")
-    
+        
+    # Task is still processing
     return render_template(
-        'upload.html',
-        table_data=processed_data.get("table_data"),
-        list_table_data=processed_data.get("list_table_data"),
-        table_data_2=processed_data.get("table_data_2"),
-        table_data_3=processed_data.get("table_data_3"),
-        table_data_4=processed_data.get("table_data_4"),
-        table_data_5=processed_data.get("table_data_5"),
-        table_data_6=processed_data.get("table_data_6"),
-        table_data_7=processed_data.get("table_data_7"),
-        table_data_8=processed_data.get("table_data_8"),
-        table_data_9=processed_data.get("table_data_9"),
-        table_data_10=processed_data.get("table_data_10"),
-        table_data_11=processed_data.get("table_data_11"), 
-        flags=FLAGS,
-        table_data_af_1=processed_data.get("table_data_af_1"), 
-        table_data_af_2=processed_data.get("table_data_af_2"), 
-        table_data_af_3=processed_data.get("table_data_af_3"), 
-        table_data_af_4=processed_data.get("table_data_af_4"), 
-        table_data_af_5=processed_data.get("table_data_af_5"), 
-        table_data_cf_1=processed_data.get("table_data_cf_1"), 
-        table_data_cf_2=processed_data.get("table_data_cf_2"), 
-        table_data_cf_3=processed_data.get("table_data_cf_3"), 
-        table_data_cf_4=processed_data.get("table_data_cf_4"), 
-        table_data_cf_5=processed_data.get("table_data_cf_5"),
-        role_access=role_access,
-        fullname=fullname
+        'processing.html',
+        task_id=task_id,
+        role_access=session.get('role_access'),
+        fullname=session.get('fullname')
     )
 
 @app.route('/task-status-big-size-file/<task_id>')
 def task_status_big_size_file(task_id):
-    """Check status of a background task"""
+    """Menampilkan status task upload besar"""
+    role_access = session.get('role_access')
+    fullname = session.get('fullname')
+
     if task_id not in task_results:
+        # Task belum selesai → tampilkan halaman "sedang diproses"
         return render_template(
             'processing_big_size.html',
             task_id=task_id,
-            role_access=session.get('role_access'),
-            fullname=session.get('fullname')
+            role_access=role_access,
+            fullname=fullname
         )
-    
+
     result = task_results[task_id]
-    
+
     if result["status"] == "error":
-        flash(f"Error: {result['error']}")
+        flash(f"Terjadi kesalahan saat memproses file: {result['error']}")
         return redirect(url_for('upload_big_size_file'))
-    
-    # Render the results using the processed data
-    processed_data = result["result"]
-    role_access = session.get('role_access')
-    fullname = session.get('fullname')
-    
-    periodeData_filter = request.args.get('periodeData', '')
-    username_filter = request.args.get('username', '')
-    namaFileUpload_filter = request.args.get('namaFileUpload', '')
 
-    # Ambil semua data
-    all_data = get_data_for_display()
-
-    # Apply filter
-    filtered_data = all_data
-    if periodeData_filter:
-        filtered_data = [item for item in filtered_data if item['periodeData'] == periodeData_filter]
-    if username_filter:
-        filtered_data = [item for item in filtered_data if item['username'] == username_filter]
-    if namaFileUpload_filter:
-        filtered_data = [item for item in filtered_data if item['namaFileUpload'] == namaFileUpload_filter]
-    
-    # Dropdown filter options
-    filter_options = get_filter_options()
-    
+    # Jika berhasil → arahkan ke halaman utama upload dengan flash message
     flash("File berhasil diupload!")
-    
-    return render_template(
-        'upload_big_size.html',
-        filter_options=filter_options,
-        selected_filters={
-            'periodeData': periodeData_filter,
-            'username': username_filter,
-            'namaFileUpload': namaFileUpload_filter
-        },
-        flags=FLAGS,
-        role_access=role_access,
-        fullname=fullname
-    )
+    return redirect(url_for('upload_big_size_file'))
 
 @app.route('/api/task-status/<task_id>', methods=['GET'])
 def api_task_status(task_id):
     """API endpoint to check task status"""
-    if task_id not in task_results:
-        return jsonify({"status": "processing"})
+    # Initialize task_progress if task_id doesn't exist
+    if task_id not in task_progress:
+        task_progress[task_id] = {'progress': 0}
     
-    result = task_results[task_id]
-    if result["status"] == "error":
-        return jsonify({"status": "error", "message": result["error"]})
+    # Check if task is completed
+    if task_id in task_results:
+        result = task_results[task_id]
+        if result["status"] == "error":
+            return jsonify({"status": "error", "message": result["error"]})
+        return jsonify({"status": "completed", "redirect": url_for('task_status', task_id=task_id)})
     
-    return jsonify({"status": "completed", "redirect": url_for('task_status', task_id=task_id)})
+    # Task is still processing
+    progress = task_progress.get(task_id, {}).get('progress', 0)
+    return jsonify({"status": "processing", "progress": progress})
 
-@app.route('/api/task-status-big-size-file/<task_id>', methods=['GET'])
-def api_task_status_big_size_file(task_id):
+@app.route('/api/task-status-big-size-file/<task_id>')
+def task_status_big_size_file_api(task_id):
     """API endpoint to check task status"""
-    if task_id not in task_results:
-        return jsonify({"status": "processing"})
+    # Check if task_id is "null" (string) or None
+    if task_id == "null" or not task_id:
+        return jsonify({'status': 'completed'})
     
-    result = task_results[task_id]
-    if result["status"] == "error":
-        return jsonify({"status": "error", "message": result["error"]})
+    # Check if task is in progress tracker
+    if task_id in task_progress:
+        progress_info = task_progress[task_id]
+        status = progress_info.get('status', 'Processing')
+        
+        # If progress is 100%, return completed
+        if progress_info.get('progress', 0) >= 100:
+            return jsonify({'status': 'completed'})
+        
+        # Return current status
+        return jsonify({'status': status})
     
-    return jsonify({"status": "completed", "redirect": url_for('task_status_big_size_file', task_id=task_id)})
+    # Check if task is in results
+    if task_id in task_results:
+        result = task_results[task_id]
+        if result.get('status') == 'error':
+            return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')})
+        return jsonify({'status': 'completed'})
+    
+    # Default to completed if not found (assume old completed task)
+    return jsonify({'status': 'completed'})
 
 @app.route('/download')
 def download_file():
@@ -1798,59 +1930,54 @@ def get_data_for_display():
     conn = get_db_connection()
     data = []
     
-    # Use a single query with UNION ALL to combine results and GROUP BY
     query = """
     SELECT periodeData, username, namaFileUpload, MAX(uploadDate) as uploadDate
     FROM (
     """
-    
-    # Build the UNION ALL query for all tables
+
     for i, table in enumerate(tables):
         query += f"SELECT periodeData, username, namaFileUpload, uploadDate FROM {table}"
         if i < len(tables) - 1:
             query += " UNION ALL "
-    
+
     query += """
     ) AS combined_data
     GROUP BY periodeData, username, namaFileUpload
     ORDER BY MAX(uploadDate) DESC
     """
-    
-    # Execute the query and convert to list of dictionaries
+
     df = pd.DataFrame()
     try:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        
-        # Get column names from cursor description
-        columns = [column[0] for column in cursor.description]
-        
-        # Fetch all rows
-        rows = cursor.fetchall()
-        
-        # Create DataFrame from the fetched data
+        cur.execute(query)
+        columns = [column[0] for column in cur.description]
+        rows = cur.fetchall()
         df = pd.DataFrame.from_records(rows, columns=columns)
         data = df.to_dict(orient='records')
+        
+        # Convert Timestamp to ISO string
+        for item in data:
+            if isinstance(item.get("uploadDate"), pd.Timestamp):
+                item["uploadDate"] = item["uploadDate"].isoformat()
     except Exception as e:
         print(f"Error getting display data: {str(e)}")
     finally:
-        conn.close()
-        
+        # Ensure the connection is closed after the task
+        if conn:
+            conn.close()
+
     return data
 
 def get_filter_options():
-    """Get unique values for filter dropdowns"""
     conn = get_db_connection()
     options = {
         'periodeData': set(),
         'username': set(),
         'namaFileUpload': set()
     }
-    
+
     try:
         cursor = conn.cursor()
-        
-        # Get unique periodeData values
+
         query = """
         SELECT DISTINCT periodeData FROM (
         """
@@ -1861,8 +1988,7 @@ def get_filter_options():
         query += ") AS combined_data ORDER BY periodeData"
         cursor.execute(query)
         options['periodeData'] = [row[0] for row in cursor.fetchall()]
-        
-        # Get unique username values
+
         query = """
         SELECT DISTINCT username FROM (
         """
@@ -1873,8 +1999,7 @@ def get_filter_options():
         query += ") AS combined_data ORDER BY username"
         cursor.execute(query)
         options['username'] = [row[0] for row in cursor.fetchall()]
-        
-        # Get unique namaFileUpload values
+
         query = """
         SELECT DISTINCT namaFileUpload FROM (
         """
@@ -1885,27 +2010,54 @@ def get_filter_options():
         query += ") AS combined_data ORDER BY namaFileUpload"
         cursor.execute(query)
         options['namaFileUpload'] = [row[0] for row in cursor.fetchall()]
-        
+
     except Exception as e:
         print(f"Error getting filter options: {str(e)}")
     finally:
         conn.close()
-        
+
     return options
 
-# Fungsi untuk mengekspor data tabel ke Excel
+@app.route('/progress-status/<task_id>')
+def get_progress_status(task_id):
+    """Get progress percentage for a task"""
+    # Check if task_id is "null" (string) or None
+    if task_id == "null" or not task_id:
+        return jsonify({'progress': 100, 'status': 'Done'})
+    
+    # Get progress info from task_progress dictionary
+    progress_info = task_progress.get(task_id)
+    if progress_info:
+        return jsonify({
+            'progress': progress_info.get('progress', 0),
+            'status': progress_info.get('status', 'Processing')
+        })
+    
+    # If task is not in progress tracker, assume it's done
+    return jsonify({'progress': 100, 'status': 'Done'})
+
+# Fungsi untuk mengekspor data tabel ke Excel (versi sederhana)
 def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
-    conn = get_db_connection()
+        
+    # Format tanggal untuk query
+    uploadDate_str = uploadDate
+    if 'T' in uploadDate:
+        # Ganti T dengan spasi untuk konsistensi
+        uploadDate_str = uploadDate.replace('T', ' ')
     
-    # Convert to datetime object
-    try:
-        uploadDate_dt = datetime.strptime(uploadDate, '%Y-%m-%d %H:%M:%S.%f')
-    except ValueError:
-        # Try parsing without microseconds if the above fails
-        uploadDate_dt = datetime.strptime(uploadDate, '%Y-%m-%d %H:%M:%S')
-    
-    # Convert back to string in a simpler format
-    uploadDate_str = uploadDate_dt.strftime('%Y-%m-%d %H:%M:%S')
+    # Definisikan tabel dan nama sheet
+    tables = [
+        'slik_fasilitas_aktif_bank_garansi',
+        'slik_fasilitas_aktif_kredit_pembiayaan',
+        'slik_fasilitas_aktif_lainnya',
+        'slik_fasilitas_aktif_lc',
+        'slik_fasilitas_aktif_surat_berharga',
+        'slik_fasilitas_lunas_bank_garansi',
+        'slik_fasilitas_lunas_kredit_pembiayaan',
+        'slik_fasilitas_lunas_lainnya',
+        'slik_fasilitas_lunas_lc',
+        'slik_fasilitas_lunas_surat_berharga'
+    ]
     
     sheet_name_mapping = {
         'slik_fasilitas_aktif_bank_garansi': 'Fasilitas Aktif Bank Garansi',
@@ -1920,49 +2072,42 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         'slik_fasilitas_lunas_surat_berharga': 'Fasilitas Lunas Surat Berharga'
     }
     
-    # Create Excel workbook in memory
+    # Buat Excel workbook
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        data_found = False
         for table in tables:
-            # Use cursor to execute the query instead of pd.read_sql
-            cursor = conn.cursor()
-            query = f"""
-            SELECT * FROM {table} 
-            WHERE periodeData = ? AND username = ? AND namaFileUpload = ? AND CONVERT(VARCHAR(19), uploadDate, 120) = ?
-            """
-            cursor.execute(query, (periodeData, username, namaFileUpload, uploadDate_str))
-            
-            # Get column names from cursor description
-            columns = [column[0] for column in cursor.description]
-            
-            # Fetch all rows
-            rows = cursor.fetchall()
-            
-            # Create DataFrame from the fetched data
-            df = pd.DataFrame.from_records(rows, columns=columns)
-            
-            # Remove the columns we don't want in the output
-            columns_to_remove = ['periodeData', 'username', 'namaFileUpload', 'uploadDate']
-            df = df.drop(columns=[col for col in columns_to_remove if col in df.columns], errors='ignore')
-            
-            # Rename 'id' column to 'No' if it exists
-            if 'id' in df.columns:
-                df = df.rename(columns={'id': 'No'})
-            
-            # Ensure sheet_name doesn't exceed Excel's 31 character limit
-            sheet_name = sheet_name_mapping.get(table, table)[:31]
-            
-            # Write DataFrame to Excel sheet
-            if not df.empty:
+            try:
+                query = f"""
+                SELECT * FROM {table} 
+                WHERE periodeData = ? AND username = ? AND namaFileUpload = ?
+                """
+                print(f"Querying SELECT * FROM {table} WHERE periodeData = {periodeData} AND username = {username} AND namaFileUpload = {namaFileUpload}")
+                cur.execute(query, (periodeData, username, namaFileUpload))
+
+                columns = [column[0] for column in cur.description]
+                rows = cur.fetchall()
+                df = pd.DataFrame.from_records(rows, columns=columns)
+
+                print(f"Found {len(df)} rows for table {table}")
+                df.drop(columns=[col for col in ['periodeData', 'username', 'namaFileUpload', 'uploadDate'] if col in df.columns], errors='ignore', inplace=True)
+                if 'id' in df.columns:
+                    df.rename(columns={'id': 'No'}, inplace=True)
+
+                sheet_name = sheet_name_mapping.get(table, table)[:31]
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                # Create empty sheet with the name
-                pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
-                
-    # Close the connection
-    conn.close()
+                data_found = True
+                print(f"Wrote data to sheet {sheet_name}")
+            except Exception as e:
+                print(f"Error on table {table}: {str(e)}")
+                continue
+        
+        # Jika tidak ada data, buat sheet "No Data"
+        if not data_found:
+            pd.DataFrame({'Message': ['No data found for the specified criteria']}).to_excel(
+                writer, sheet_name='No Data', index=False)
     
-    # Reset the pointer to the beginning of the BytesIO object
+    # Reset pointer dan return
     output.seek(0)
     return output
     
@@ -1977,40 +2122,95 @@ def upload_big_size_file():
     username = session.get('username')
 
     if request.method == 'GET':
+        show_alert = session.pop('upload_done', False)  # Hapus setelah ambil
         # Cek apakah ini filter search?
         periodeData_filter = request.args.get('periodeData', '')
         username_filter = request.args.get('username', '')
         namaFileUpload_filter = request.args.get('namaFileUpload', '')
+        search_keyword = request.args.get('search', '').lower()
+        page = int(request.args.get('page', 1))
+        per_page = 10
 
         # Ambil semua data
         all_data = get_data_for_display()
+        # Tambahkan task yang sedang berjalan dari task_progress
+        in_progress_tasks = []
+        for tid, v in task_progress.items():
+            # Hanya tambahkan jika status masih Processing dan ada metadata
+            if v.get('status') == 'Processing' and 'temp_metadata' in v:
+                # Pastikan task_id disimpan dalam metadata
+                v['temp_metadata']['task_id'] = tid
+                in_progress_tasks.append(v['temp_metadata'])
+        
+        # Tambahkan task yang sedang berjalan ke awal daftar
+        all_data = in_progress_tasks + all_data
 
         # Apply filter
         filtered_data = all_data
         if periodeData_filter:
-            filtered_data = [item for item in filtered_data if item['periodeData'] == periodeData_filter]
+            filtered_data = [item for item in filtered_data if item.get('periodeData') == periodeData_filter]
         if username_filter:
-            filtered_data = [item for item in filtered_data if item['username'] == username_filter]
+            filtered_data = [item for item in filtered_data if item.get('username') == username_filter]
         if namaFileUpload_filter:
-            filtered_data = [item for item in filtered_data if item['namaFileUpload'] == namaFileUpload_filter]
+            filtered_data = [item for item in filtered_data if item.get('namaFileUpload') == namaFileUpload_filter]
+        if search_keyword:
+            filtered_data = [item for item in filtered_data if 
+                        (item.get('namaFileUpload', '').lower() and search_keyword in item['namaFileUpload'].lower()) or
+                        (item.get('username', '').lower() and search_keyword in item['username'].lower()) or
+                        (item.get('periodeData') and search_keyword in str(item['periodeData']).lower())]
+            
+        total_items = len(filtered_data)
+        total_pages = (total_items + per_page - 1) // per_page
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_data = filtered_data[start:end]
+        
+        # Siapkan task_progress default
+        current_task_progress = {}
 
+        for item in paginated_data:
+            # Pastikan item memiliki key yang dibutuhkan
+            if not all(key in item for key in ['username', 'namaFileUpload']):
+                continue
+                
+            task_id = item.get('task_id')
+
+            # Jika task_id ada dan ada di task_progress
+            if task_id and task_id in task_progress:
+                current_task_progress[task_id] = task_progress[task_id].get('progress', 100)
+            else:
+                # Jika tidak ada task_id, coba cocokkan manual pakai username & namaFileUpload
+                key = f"{item['username']}_{item['namaFileUpload']}_"
+                matched = [tid for tid, v in task_progress.items() if v.get('key', '').startswith(key)]
+
+                if matched:
+                    task_id = matched[0]
+                    item['task_id'] = task_id
+                    current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
+                else:
+                    # Jika tidak ditemukan, anggap sudah selesai
+                    item['task_id'] = None
+        
         # Dropdown filter options
         filter_options = get_filter_options()
 
-        session['data_available'] = False
-
         return render_template(
             'upload_big_size.html',
-            data=filtered_data,
+            show_alert=show_alert,
+            data=paginated_data,
             filter_options=filter_options,
             selected_filters={
                 'periodeData': periodeData_filter,
                 'username': username_filter,
                 'namaFileUpload': namaFileUpload_filter
             },
+            search=search_keyword,
+            page=page,
+            total_pages=total_pages,
             flags=FLAGS,
             role_access=role_access,
-            fullname=fullname
+            fullname=fullname,
+            task_progress=current_task_progress
         )
 
     elif request.method == 'POST':
@@ -2018,25 +2218,28 @@ def upload_big_size_file():
         nama_file = request.form.get('nama_file')
         uploaded_files = request.files.getlist('file')
 
-        # Hitung total size
+        if not uploaded_files or not any(f.filename for f in uploaded_files):
+            flash("No files selected for upload.")
+            return redirect(url_for('upload_big_size_file'))
+
+        # Hitung total ukuran
         total_file_size = 0
-        for file in uploaded_files:
-            file_size = len(file.read())
-            file.seek(0)  # Reset posisi file untuk nanti dibaca lagi
-            total_file_size += file_size
+        for f in uploaded_files:
+            if f and f.filename:
+                f.seek(0, 2)  # Go to end of file
+                total_file_size += f.tell()  # Get current position (file size)
+                f.seek(0)  # Reset file pointer to beginning
 
         if total_file_size > MAX_FILE_BIG_SIZE:
-            return '''
-                <script>
-                    alert("Total file yang diupload terlalu besar. Maksimum 110MB!");
-                    window.location.href = "/upload-big-size";
-                </script>
-            '''
+            flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
+            return redirect(url_for('upload_big_size_file'))
 
         # Generate unique task id
         task_id = str(uuid.uuid4())
+        current_datetime = datetime.now()
 
         # Simpan file dalam bentuk bytes
+        total_file_size = 0
         temp_files = []
         for file in uploaded_files:
             if file and file.filename:
@@ -2052,19 +2255,44 @@ def upload_big_size_file():
             "role_access": role_access,
             "fullname": fullname,
             "flag": flag,
-            "nama_file": nama_file,
+            "nama_file": nama_file
         }
-        task_queue.put((task_id, temp_files, user_info))
+        
+        # Masukkan ke task_progress
+        task_progress[task_id] = {
+            'progress': 0,
+            'status': 'Processing',
+            'key': f"{username}_{nama_file}_{flag}",
+            'temp_metadata': {
+                'username': username,
+                'namaFileUpload': nama_file,
+                'uploadDate': current_datetime,
+                'task_id': task_id
+            }
+        }
 
+        # Masukkan ke queue untuk diproses
+        task_queue.put((task_id, temp_files, user_info))
+        
+        # Simpan task_id di session dan set flag upload_done
         session['task_id'] = task_id
-        session['data_available'] = True
+        session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
 
         flash("Files are being processed in the background.")
-        return redirect(url_for('task_status_big_size_file', task_id=task_id))
+        return redirect(url_for('upload_big_size_file'))
 
 @app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
 def download_excel(periodeData, username, namaFileUpload, uploadDate):
     try:
+        # URL decode parameters
+        periodeData = urllib.parse.unquote(periodeData)
+        username = urllib.parse.unquote(username)
+        namaFileUpload = urllib.parse.unquote(namaFileUpload)
+        uploadDate = urllib.parse.unquote(uploadDate)
+        
+        # Log parameters for debugging
+        print(f"Downloading Excel with parameters: {periodeData}, {username}, {namaFileUpload}, {uploadDate}")
+        
         # Menyiapkan file Excel berdasarkan filter
         excel_file = export_to_excel(periodeData, username, namaFileUpload, uploadDate)
         
@@ -2072,10 +2300,12 @@ def download_excel(periodeData, username, namaFileUpload, uploadDate):
         return send_file(
             excel_file,
             as_attachment=True,
-            download_name=f"{periodeData}_{username}_{namaFileUpload}_{uploadDate}.xlsx",
+            download_name=f"{periodeData}_{namaFileUpload}.xlsx",
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     except Exception as e:
+        print(f"Error in download_excel: {str(e)}")
+        traceback.print_exc()  # Print full stack trace for debugging
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@
             <div class="mb-3">
                 <div class="d-flex align-items-center">
                     <label for="file" class="form-label me-2">Select JSON File(s)</label>
-                    <small class="text-danger">*Maksimal size file upload 110MB</small> 
+                    <small class="text-danger">*Maksimal size file upload 200MB</small> 
                 </div>
                 <input type="file" name="file" class="form-control" accept=".txt" multiple required>
             </div>
@@ -93,28 +93,53 @@
                         <th>Nama File Upload</th>
                         <th>Periode Data</th>
                         <th>Upload Date</th>
+                        <th>Status</th>
                         <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for item in data %}
+                    {% set task_id = item.task_id %}
+                    {% set progress = task_progress.get(task_id, 100 if not task_id else 0) %}
                     <tr>
                         <td>{{ item.namaFileUpload }}</td>
                         <td>{{ item.periodeData }}</td>
                         <td>{{ item.uploadDate }}</td>
+                        <td>
+                            <div class="progress" style="height: 20px;">
+                                <div id="progress-bar-{{ task_id or 'static-' ~ loop.index }}" class="progress-bar progress-bar-striped {{ 'progress-bar-animated' if progress < 100 else '' }}"
+                                    role="progressbar"
+                                    style="width: {{ progress }}%;"
+                                    aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                                    {{ progress }}%
+                                </div>
+                            </div>
+                        </td>
                         <td class="text-center">
-                            <a href="{{ url_for('download_excel', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate) }}" class="btn btn-success btn-sm">
-                                <i class="fas fa-download"></i> Download
-                            </a>
+                            {% if progress == 100 %}
+                                <a href="{{ url_for('download_excel', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
+                                   class="btn btn-success btn-sm" id="download-btn-{{ task_id or 'static-' ~ loop.index }}">
+                                    <i class="fas fa-download"></i> Download
+                                </a>
+                            {% else %}
+                                <button class="btn btn-secondary btn-sm" disabled id="download-btn-{{ task_id or 'static-' ~ loop.index }}"
+                                       data-periode-data="{{ item.periodeData }}"
+                                       data-username="{{ item.username }}"
+                                       data-nama-file="{{ item.namaFileUpload }}"
+                                       data-upload-date="{{ item.uploadDate|string }}">
+                                    <i class="fas fa-spinner"></i> Processing...
+                                </button>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
+                
                     {% if not data %}
                     <tr>
                         <td colspan="5" class="text-center">No data available</td>
                     </tr>
                     {% endif %}
-                </tbody>
+                </tbody>                
             </table>
         </div>
     </div>
@@ -126,6 +151,257 @@
         select.addEventListener('change', function() {
             this.form.submit();
         });
+    });
+
+    document.addEventListener("DOMContentLoaded", function () {
+        // Get all task IDs (avoid null values)
+        const taskIds = {{ data | map(attribute='task_id') | list | tojson }}.filter(id => id !== null);
+        const completedTasks = new Set();
+        const totalTasks = new Set(taskIds).size;
+        let activeTaskCount = 0;
+
+        // Track tasks that are already at 100% to avoid unnecessary polling
+        // and count active tasks (those not at 100%)
+        document.querySelectorAll('[id^="progress-bar-"]').forEach(bar => {
+            if (bar.getAttribute("aria-valuenow") === "100") {
+                const taskId = bar.id.replace('progress-bar-', '');
+                completedTasks.add(taskId);
+            } else {
+                activeTaskCount++;
+            }
+        });
+
+        console.log(`Initial status: ${completedTasks.size} completed tasks, ${activeTaskCount} active tasks`);
+
+        // Function to show alert and handle reload based on completion status
+        function handleTaskCompletion(taskId) {
+            // Add to completed tasks if not already there
+            if (!completedTasks.has(taskId)) {
+                completedTasks.add(taskId);
+                activeTaskCount--;
+                
+                console.log(`Task ${taskId} completed. Active tasks remaining: ${activeTaskCount}`);
+                
+                // Check if all tasks are completed
+                if (activeTaskCount <= 0) {
+                    // All tasks completed - show alert and reload on confirmation
+                    console.log("All tasks completed, showing reload alert");
+                    if (confirm("Semua file berhasil diupload! Klik OK untuk merefresh halaman.")) {
+                        window.location.reload();
+                    }
+                } else {
+                    // Some tasks completed but others still processing - show non-reloading alert
+                    console.log("Some tasks still processing, showing non-reload alert");
+                    alert("File berhasil diupload! Masih ada proses upload lain yang sedang berjalan.");
+                }
+            }
+        }
+
+        // Poll for task status updates
+        taskIds.forEach(taskId => {
+            // Skip completed tasks
+            if (completedTasks.has(taskId)) return;
+            
+            // Handle "null" task_id case - backend treats these as completed
+            if (taskId === "null" || !taskId) {
+                completedTasks.add(taskId);
+                return;
+            }
+            
+            const progressBar = document.getElementById(`progress-bar-${taskId}`);
+            const downloadBtn = document.getElementById(`download-btn-${taskId}`);
+            
+            if (!progressBar || !downloadBtn) return;
+
+            function pollStatus() {
+                // Only poll if task is not completed
+                if (completedTasks.has(taskId)) return;
+                
+                fetch(`/api/task-status-big-size-file/${taskId}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.status === "completed") {
+                            // Update UI
+                            progressBar.style.width = "100%";
+                            progressBar.classList.remove("progress-bar-animated");
+                            progressBar.innerText = "100%";
+                            progressBar.setAttribute("aria-valuenow", "100");
+        
+                            // Convert button to link with proper URL
+                            const periodeData = downloadBtn.getAttribute('data-periode-data');
+                            const username = downloadBtn.getAttribute('data-username');
+                            const namaFile = downloadBtn.getAttribute('data-nama-file');
+                            const uploadDate = downloadBtn.getAttribute('data-upload-date');
+                            
+                            // Create download URL with path parameters format
+                            const downloadUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            
+                            const newDownloadBtn = document.createElement('a');
+                            newDownloadBtn.href = downloadUrl;
+                            newDownloadBtn.id = downloadBtn.id;
+                            newDownloadBtn.className = "btn btn-success btn-sm";
+                            newDownloadBtn.innerHTML = `<i class="fas fa-download"></i> Download`;
+                            
+                            // Replace the old button with the new link
+                            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+        
+                            // Show alert only once per task
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId);
+                            }
+                        } else                         if (data.status === "error") {
+                            completedTasks.add(taskId);
+                            activeTaskCount--;
+                            
+                            progressBar.classList.add("bg-danger");
+                            progressBar.innerText = "Error";
+                            
+                            console.log(`Task ${taskId} failed with error. Active tasks remaining: ${activeTaskCount}`);
+                            
+                            // Check if this was the last active task
+                            if (activeTaskCount <= 0) {
+                                console.log("All tasks completed (some with errors), showing reload alert");
+                                if (confirm("Semua proses upload selesai, namun beberapa mengalami error. Klik OK untuk merefresh halaman.")) {
+                                    window.location.reload();
+                                }
+                            }
+                        } else {
+                            // Continue polling only if task is still in progress
+                            setTimeout(pollStatus, 5000);
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Error polling task status:", error);
+                        // If we get too many errors (e.g., endpoint not responding),
+                        // consider the task as failed
+                        pollStatus.errorCount = (pollStatus.errorCount || 0) + 1;
+                        if (pollStatus.errorCount > 3) {
+                            console.warn(`Too many polling errors for task ${taskId}, marking as error`);
+                            completedTasks.add(taskId);
+                            activeTaskCount--;
+                            
+                            if (progressBar) {
+                                progressBar.classList.add("bg-danger");
+                                progressBar.innerText = "Error";
+                            }
+                            
+                            // Check if this was the last active task
+                            if (activeTaskCount <= 0) {
+                                console.log("All tasks completed (some with errors), showing reload alert");
+                                if (confirm("Semua proses upload selesai, namun beberapa mengalami error. Klik OK untuk merefresh halaman.")) {
+                                    window.location.reload();
+                                }
+                            }
+                        } else {
+                            // Retry with backoff
+                            setTimeout(pollStatus, 10000);
+                        }
+                    });
+            }
+        
+            // Start polling if task is not completed
+            pollStatus();
+        });
+
+        // Poll for progress updates
+        function pollProgress() {
+            // Only get progress bars for tasks that aren't completed
+            taskIds.forEach(taskId => {
+                // Skip completed tasks
+                if (completedTasks.has(taskId)) return;
+                
+                const progressBar = document.getElementById(`progress-bar-${taskId}`);
+                const downloadBtn = document.getElementById(`download-btn-${taskId}`);
+                
+                if (!progressBar || !downloadBtn) return;
+
+                fetch(`/progress-status/${taskId}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        const progress = data.progress;
+                        
+                        // Update progress bar
+                        progressBar.style.width = progress + "%";
+                        progressBar.setAttribute("aria-valuenow", progress);
+                        progressBar.textContent = progress + "%";
+
+                        // If progress reaches 100%, mark as completed
+                        if (progress >= 100) {
+                            // Update UI
+                            progressBar.classList.remove("progress-bar-animated");
+                            
+                            // Convert button to link with proper URL
+                            const periodeData = downloadBtn.getAttribute('data-periode-data');
+                            const username = downloadBtn.getAttribute('data-username');
+                            const namaFile = downloadBtn.getAttribute('data-nama-file');
+                            const uploadDate = downloadBtn.getAttribute('data-upload-date');
+                            
+                            // Create download URL with path parameters format
+                            const downloadUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            
+                            const newDownloadBtn = document.createElement('a');
+                            newDownloadBtn.href = downloadUrl;
+                            newDownloadBtn.id = downloadBtn.id;
+                            newDownloadBtn.className = "btn btn-success btn-sm";
+                            newDownloadBtn.innerHTML = `<i class="fas fa-download"></i> Download`;
+                            
+                            // Replace the old button with the new link
+                            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+                            
+                            // Show alert only once per task
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId);
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Polling error:", error);
+                        // Similar error handling as in pollStatus
+                        pollProgress.errorCount = (pollProgress.errorCount || 0) + 1;
+                        if (pollProgress.errorCount > 3) {
+                            console.warn(`Too many progress polling errors for task ${taskId}, marking as error`);
+                            completedTasks.add(taskId);
+                            activeTaskCount--;
+                            
+                            if (progressBar) {
+                                progressBar.classList.add("bg-danger");
+                                progressBar.innerText = "Error";
+                            }
+                        }
+                    });
+            });
+            
+            // Continue polling only if there are uncompleted tasks
+            if (taskIds.some(id => !completedTasks.has(id))) {
+                setTimeout(pollProgress, 3000);
+            }
+        }
+        
+        // Start progress polling if there are uncompleted tasks
+        if (taskIds.length > 0 && taskIds.some(id => !completedTasks.has(id))) {
+            pollProgress();
+        }
+    });
+
+    // Show loading state on form submit
+    document.querySelector('form').addEventListener('submit', function () {
+        const submitBtn = this.querySelector('[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+        }
     });
 </script>
 {% endblock %}
