@@ -37,7 +37,7 @@
     </div>
 </div>
 
-<div class="card">
+<div class="card" style="margin-top: 10px">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">Data Upload</h5>
         <a href="{{ url_for('upload_big_size_file') }}" class="btn btn-info btn-sm">
@@ -90,11 +90,11 @@
             <table class="table table-striped table-bordered">
                 <thead class="table-dark">
                     <tr>
-                        <th>Nama File Upload</th>
-                        <th>Periode Data</th>
-                        <th>Upload Date</th>
-                        <th>Status</th>
-                        <th>Action</th>
+                        <th class="text-center">Nama File Upload</th>
+                        <th class="text-center">Periode Data</th>
+                        <th class="text-center">Upload Date</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Download</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -104,7 +104,16 @@
                     <tr>
                         <td>{{ item.namaFileUpload }}</td>
                         <td>{{ item.periodeData }}</td>
-                        <td>{{ item.uploadDate }}</td>
+                        <td>{% if item.uploadDate %}
+                                {% set clean_date = item.uploadDate|string|replace('T', ' ')|replace('.823000', '')|replace('.000000', '')|replace('.123000', '')|replace('.456000', '')|replace('.789000', '') %}
+                                {% if clean_date|length > 19 %}
+                                    {{ clean_date[:19] }}
+                                {% else %}
+                                    {{ clean_date }}
+                                {% endif %}
+                            {% else %}
+                                N/A
+                            {% endif %}</td>
                         <td>
                             <div class="progress" style="height: 20px;">
                                 <div id="progress-bar-{{ task_id or 'static-' ~ loop.index }}" class="progress-bar progress-bar-striped {{ 'progress-bar-animated' if progress < 100 else '' }}"
@@ -117,10 +126,23 @@
                         </td>
                         <td class="text-center">
                             {% if progress == 100 %}
-                                <a href="{{ url_for('download_excel', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
-                                   class="btn btn-success btn-sm" id="download-btn-{{ task_id or 'static-' ~ loop.index }}">
-                                    <i class="fas fa-download"></i> Download
-                                </a>
+                                <div class="btn-group" role="group" aria-label="Download options">
+                                    <!-- Tombol Download Excel -->
+                                    <a href="{{ url_for('download_excel', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
+                                        class="btn btn-outline-success btn-sm d-flex align-items-center gap-1 px-3 py-2"
+                                        id="download-btn-{{ task_id or 'static-' ~ loop.index }}"
+                                        title="Download Excel">
+                                        <i class="fas fa-file-excel fa-fw"></i> <span>Output Excel</span>
+                                    </a>
+
+                                    <!-- Tombol Download ZIP -->
+                                    <a href="{{ url_for('download_upload_zip', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
+                                        class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1 px-3 py-2"
+                                        id="download-zip-btn-{{ task_id or 'static-' ~ loop.index }}"
+                                        title="Download All Files as ZIP">
+                                        <i class="fas fa-file-archive fa-fw"></i> <span>File Upload TXT</span>
+                                    </a>
+                                </div>
                             {% else %}
                                 <button class="btn btn-secondary btn-sm" disabled id="download-btn-{{ task_id or 'static-' ~ loop.index }}"
                                        data-periode-data="{{ item.periodeData }}"
@@ -238,24 +260,45 @@
                             const namaFile = downloadBtn.getAttribute('data-nama-file');
                             const uploadDate = downloadBtn.getAttribute('data-upload-date');
                             
-                            // Create download URL with path parameters format
-                            const downloadUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            // Create download URLs
+                            const downloadExcelUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            const downloadZipUrl = `/download_upload/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
                             
-                            const newDownloadBtn = document.createElement('a');
-                            newDownloadBtn.href = downloadUrl;
-                            newDownloadBtn.id = downloadBtn.id;
-                            newDownloadBtn.className = "btn btn-success btn-sm";
-                            newDownloadBtn.innerHTML = `<i class="fas fa-download"></i> Download`;
+                            // Create button group with both download options
+                            const btnGroup = document.createElement('div');
+                            btnGroup.className = "btn-group";
+                            btnGroup.setAttribute('role', 'group');
+                            btnGroup.setAttribute('aria-label', 'Download options');
                             
-                            // Replace the old button with the new link
-                            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+                            // Excel download button
+                            const excelBtn = document.createElement('a');
+                            excelBtn.href = downloadExcelUrl;
+                            excelBtn.id = downloadBtn.id;
+                            excelBtn.className = "btn btn-success btn-sm";
+                            excelBtn.title = "Download Excel";
+                            excelBtn.innerHTML = `<i class="fas fa-file-excel"></i> Excel`;
+                            
+                            // ZIP download button
+                            const zipBtn = document.createElement('a');
+                            zipBtn.href = downloadZipUrl;
+                            zipBtn.id = downloadBtn.id.replace('download-btn-', 'download-zip-btn-');
+                            zipBtn.className = "btn btn-info btn-sm";
+                            zipBtn.title = "Download All Files as ZIP";
+                            zipBtn.innerHTML = `<i class="fas fa-file-archive"></i> ZIP`;
+                            
+                            // Add buttons to group
+                            btnGroup.appendChild(excelBtn);
+                            btnGroup.appendChild(zipBtn);
+                            
+                            // Replace the old button with the new button group
+                            downloadBtn.parentNode.replaceChild(btnGroup, downloadBtn);
         
                             // Show alert only once per task
                             if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
                                 sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
                                 handleTaskCompletion(taskId);
                             }
-                        } else                         if (data.status === "error") {
+                        } else if (data.status === "error") {
                             completedTasks.add(taskId);
                             activeTaskCount--;
                             
@@ -347,17 +390,38 @@
                             const namaFile = downloadBtn.getAttribute('data-nama-file');
                             const uploadDate = downloadBtn.getAttribute('data-upload-date');
                             
-                            // Create download URL with path parameters format
-                            const downloadUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            // Create download URLs
+                            const downloadExcelUrl = `/download-big-size/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
+                            const downloadZipUrl = `/download_upload/${encodeURIComponent(periodeData)}/${encodeURIComponent(username)}/${encodeURIComponent(namaFile)}/${encodeURIComponent(uploadDate)}`;
                             
-                            const newDownloadBtn = document.createElement('a');
-                            newDownloadBtn.href = downloadUrl;
-                            newDownloadBtn.id = downloadBtn.id;
-                            newDownloadBtn.className = "btn btn-success btn-sm";
-                            newDownloadBtn.innerHTML = `<i class="fas fa-download"></i> Download`;
+                            // Create button group with both download options
+                            const btnGroup = document.createElement('div');
+                            btnGroup.className = "btn-group";
+                            btnGroup.setAttribute('role', 'group');
+                            btnGroup.setAttribute('aria-label', 'Download options');
                             
-                            // Replace the old button with the new link
-                            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+                            // Excel download button
+                            const excelBtn = document.createElement('a');
+                            excelBtn.href = downloadExcelUrl;
+                            excelBtn.id = downloadBtn.id;
+                            excelBtn.className = "btn btn-success btn-sm";
+                            excelBtn.title = "Download Excel";
+                            excelBtn.innerHTML = `<i class="fas fa-file-excel"></i> Excel`;
+                            
+                            // ZIP download button
+                            const zipBtn = document.createElement('a');
+                            zipBtn.href = downloadZipUrl;
+                            zipBtn.id = downloadBtn.id.replace('download-btn-', 'download-zip-btn-');
+                            zipBtn.className = "btn btn-info btn-sm";
+                            zipBtn.title = "Download All Files as ZIP";
+                            zipBtn.innerHTML = `<i class="fas fa-file-archive"></i> ZIP`;
+                            
+                            // Add buttons to group
+                            btnGroup.appendChild(excelBtn);
+                            btnGroup.appendChild(zipBtn);
+                            
+                            // Replace the old button with the new button group
+                            downloadBtn.parentNode.replaceChild(btnGroup, downloadBtn);
                             
                             // Show alert only once per task
                             if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {

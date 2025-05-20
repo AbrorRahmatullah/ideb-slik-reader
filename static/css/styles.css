@@ -111,6 +111,12 @@ body {
 .btn-primary:hover, .btn-success:hover {
     background: #1a2e63;
 }
+
+.btn-group a:hover {
+    box-shadow: 0 0 5px rgba(0,0,0,0.15);
+    transition: all 0.2s ease-in-out;
+}
+
 .table-container {
     background: white;
     padding: 1rem;

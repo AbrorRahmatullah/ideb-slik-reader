@@ -2,3 +2,4 @@ venv
 .env
 file_download
 config
+uploads
