@@ -8,9 +8,10 @@
         <h5 class="mb-0">Upload Files More Than 10MB</h5>
     </div>
     <div class="card-body">
-        <form action="/upload-big-size" method="POST" enctype="multipart/form-data">
+        <form id="uploadForm" action="/upload-big-size" method="POST" enctype="multipart/form-data">
             <div class="mb-3">
                 <label for="flag" class="form-label">Select a Flag</label>
+                <small class="text-danger">*Required</small> 
                 <select name="flag" class="form-select" required>
                     <option value="" disabled selected>Select a flag</option>
                     {% for flag in flags %}
@@ -27,9 +28,13 @@
             </div>
             <div class="mb-3">
                 <label for="nama_file" class="form-label">Nama File</label>
-                <input type="text" name="nama_file" class="form-control" required>
+                <small class="text-danger">*Required</small> 
+                <input type="text" id="nama_file" name="nama_file" class="form-control" required>
+                <div id="filename-error" class="text-danger mt-1" style="display: none;">
+                    <small><i class="fas fa-exclamation-triangle"></i> Nama file sudah ada, harap masukkan nama file yang lain</small>
+                </div>
             </div>
-            <button type="submit" class="btn btn-primary">Upload</button>    
+            <button type="submit" id="submitBtn" class="btn btn-primary">Upload</button>    
         </form>
         <div class="mt-1 d-flex justify-content-center">
             <a href="/upload" class="btn btn-danger" style="width: 100%;">Back</a>
@@ -167,7 +172,131 @@
     </div>
 </div>
 
+<!-- Custom Alert Modal -->
+<div class="modal fade" id="duplicateFileModal" tabindex="-1" aria-labelledby="duplicateFileModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="duplicateFileModalLabel">
+                    <i class="fas fa-exclamation-triangle"></i> Peringatan
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Nama File sudah ada!</strong></p>
+                <p>Harap masukkan nama file yang lain.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+    // Get existing file names from the table for client-side check
+    const existingFileNames = [
+        {% for item in data %}
+        "{{ item.namaFileUpload }}",
+        {% endfor %}
+    ];
+
+    // Function to check if filename already exists
+    function checkFilenameExists(filename) {
+        return existingFileNames.includes(filename.trim());
+    }
+
+    // Function to show duplicate file alert
+    function showDuplicateFileAlert() {
+        // Show Bootstrap modal
+        const modal = new bootstrap.Modal(document.getElementById('duplicateFileModal'));
+        modal.show();
+        
+        // Also show browser alert as backup
+        alert("Nama File sudah ada, harap masukkan nama file yang lain");
+    }
+
+    // Real-time validation on input
+    document.getElementById('nama_file').addEventListener('input', function() {
+        const filename = this.value.trim();
+        const errorDiv = document.getElementById('filename-error');
+        const submitBtn = document.getElementById('submitBtn');
+        
+        if (filename && checkFilenameExists(filename)) {
+            // Show error message
+            errorDiv.style.display = 'block';
+            this.classList.add('is-invalid');
+            submitBtn.disabled = true;
+        } else {
+            // Hide error message
+            errorDiv.style.display = 'none';
+            this.classList.remove('is-invalid');
+            submitBtn.disabled = false;
+        }
+    });
+
+    // Form submission validation
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+        const filenameInput = document.getElementById('nama_file');
+        const filename = filenameInput.value.trim();
+        
+        // Client-side check
+        if (checkFilenameExists(filename)) {
+            e.preventDefault();
+            showDuplicateFileAlert();
+            filenameInput.focus();
+            return false;
+        }
+        
+        // Server-side check via AJAX before actual form submission
+        e.preventDefault();
+        
+        const submitBtn = document.getElementById('submitBtn');
+        const originalText = submitBtn.textContent;
+        
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+        
+        // Check with server
+        fetch('/check-filename', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 'nama_file': filename })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.exists) {
+                // File exists - show alert
+                showDuplicateFileAlert();
+                filenameInput.focus();
+                filenameInput.classList.add('is-invalid');
+                document.getElementById('filename-error').style.display = 'block';
+            } else {
+                // File doesn't exist - proceed with form submission
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+                this.submit();
+            }
+        })
+        .catch(error => {
+            console.error('Error checking filename:', error);
+            // If check fails, proceed with form submission
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+            this.submit();
+        })
+        .finally(() => {
+            // Reset button state if not proceeding with upload
+            setTimeout(() => {
+                if (submitBtn.innerHTML.includes('Checking')) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                }
+            }, 1000);
+        });
+    });
+
     // Auto-submit on dropdown change
     document.querySelectorAll('.filter-section select').forEach(select => {
         select.addEventListener('change', function() {
@@ -456,15 +585,6 @@
         // Start progress polling if there are uncompleted tasks
         if (taskIds.length > 0 && taskIds.some(id => !completedTasks.has(id))) {
             pollProgress();
-        }
-    });
-
-    // Show loading state on form submit
-    document.querySelector('form').addEventListener('submit', function () {
-        const submitBtn = this.querySelector('[type="submit"]');
-        if (submitBtn) {
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Uploading...';
         }
     });
 </script>

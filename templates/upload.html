@@ -11,6 +11,7 @@
         <form action="/upload" method="POST" enctype="multipart/form-data">
             <div class="mb-3">
                 <label for="flag" class="form-label">Select a Flag</label>
+                <small class="text-danger">*Required</small> 
                 <select name="flag" class="form-select" required>
                     <option value="" disabled selected>Select a flag</option>
                     {% for flag in flags %}
@@ -27,9 +28,13 @@
             </div>
             <div class="mb-3">
                 <label for="nama_file" class="form-label">Nama File</label>
-                <input type="text" name="nama_file" class="form-control" required>
+                <small class="text-danger">*Required</small> 
+                <input type="text" name="nama_file" id="nama_file" class="form-control" required>
+                <div id="filename-error" class="text-danger mt-1" style="display: none;">
+                    <small><i class="fas fa-exclamation-triangle"></i> Nama file sudah ada, harap masukkan nama file yang lain</small>
+                </div>
             </div>
-            <button type="submit" class="btn btn-primary">Upload</button>    
+            <button type="submit" id="submitBtn" class="btn btn-primary">Upload</button>    
         </form>
         <div class="mt-1 d-flex justify-content-center">
             <a href="/upload-big-size" class="btn btn-secondary" style="width: 100%;">Upload File lebih dari 10MB</a>
@@ -88,15 +93,61 @@
 <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 
 <script>
-// Add loading spinner when form is submitted
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.querySelector('form');
-    const submitBtn = form.querySelector('button[type="submit"]');
-    
-    form.addEventListener('submit', function() {
-        // Change button text and add spinner
-        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
-        submitBtn.disabled = true;
+    // Get existing filenames from backend
+    const existingFileNames = [
+        {% if existing_files %}
+            {% for filename in existing_files %}
+            "{{ filename }}",
+            {% endfor %}
+        {% endif %}
+    ];
+
+    // Function to check if filename already exists
+    function checkFilenameExists(filename) {
+        return existingFileNames.includes(filename.trim());
+    }
+
+    // Real-time validation on input
+    document.addEventListener('DOMContentLoaded', function() {
+        const namaFileInput = document.getElementById('nama_file');
+        const errorDiv = document.getElementById('filename-error');
+        const submitBtn = document.getElementById('submitBtn');
+        
+        if (namaFileInput) {
+            namaFileInput.addEventListener('input', function() {
+                const filename = this.value.trim();
+                
+                if (filename && checkFilenameExists(filename)) {
+                    // Show error message
+                    errorDiv.style.display = 'block';
+                    this.classList.add('is-invalid');
+                    if (submitBtn) submitBtn.disabled = true;
+                } else {
+                    // Hide error message
+                    errorDiv.style.display = 'none';
+                    this.classList.remove('is-invalid');
+                    if (submitBtn) submitBtn.disabled = false;
+                }
+            });
+        }
+        
+        // Add loading spinner when form is submitted
+        const form = document.querySelector('form');
+        
+        if (form && submitBtn) {
+            form.addEventListener('submit', function(e) {
+                // Check for duplicate filename before submitting
+                const filename = namaFileInput.value.trim();
+                if (checkFilenameExists(filename)) {
+                    e.preventDefault();
+                    alert("Nama File sudah ada, harap masukkan nama file yang lain");
+                    return false;
+                }
+                
+                // Change button text and add spinner
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+                submitBtn.disabled = true;
+            });
+        }
     });
-});
 </script>

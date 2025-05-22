@@ -97,19 +97,58 @@ def save_file_to_local(file_content, filename, upload_path):
         f.write(file_content)
     return file_path
 
-# --- Save to DB ---
-def save_file_metadata_to_db(periodeData, namaFileUpload, uploadFolderPath, username, fullname, roleAccess, uploadDate):
+# --- Check if file name exists ---
+def check_filename_exists(namaFileUpload):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        query = "SELECT COUNT(*) FROM slik_uploader WHERE namaFileUpload = ?"
+        cursor.execute(query, (namaFileUpload,))
+        count = cursor.fetchone()[0]
+        
+        return count > 0
+        
+    except Exception as e:
+        print(f"Error checking filename: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
 
-        # Menggunakan uploadFolderPath sebagai pengganti fileContentBase64
+def get_existing_filenames():
+    """
+    Fungsi untuk mengambil daftar nama file yang sudah ada
+    Sesuaikan dengan struktur database/storage Anda
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT DISTINCT namaFileUpload FROM slik_uploader")
+        result = cursor.fetchall()
+        return [row[0] for row in result]
+        
+    except Exception as e:
+        print(f"Error getting existing filenames: {e}")
+        return []
+
+# --- Alternative: Jika menggunakan Flask dengan flash message ---
+def save_file_metadata_to_db_flask(periodeData, namaFileUpload, uploadFolderPath, username, fullname, roleAccess, uploadDate):
+    try:
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
         query = """
             INSERT INTO slik_uploader (periodeData, namaFileUpload, uploadFolderPath, username, fullname, roleAccess, uploadDate)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """
         cursor.execute(query, (periodeData, namaFileUpload, uploadFolderPath, username, fullname, roleAccess, uploadDate))
         conn.commit()
+        
+        return True
 
     except Exception as e:
         print(f"Error saving to DB: {e}")
@@ -223,7 +262,7 @@ def process_files_worker():
             # Simpan metadata upload ke database
             uploaded_at = datetime.now()
             
-            save_file_metadata_to_db(
+            save_file_metadata_to_db_flask(
                 periodeData=periode_data,
                 namaFileUpload=nama_file_upload,
                 uploadFolderPath=upload_folder_path,  # Simpan path folder, bukan base64
@@ -284,6 +323,28 @@ def create_zip_from_folder(folder_path, zip_name=None):
     
     memory_file.seek(0)
     return memory_file, zip_name
+
+# Route untuk mengecek nama file
+@app.route('/check-filename', methods=['POST'])
+def check_filename():
+    try:
+        data = request.get_json()
+        nama_file = data.get('nama_file', '').strip()
+        
+        if not nama_file:
+            return jsonify({'exists': False, 'message': 'Nama file tidak boleh kosong'})
+        
+        # Cek apakah nama file sudah ada di database
+        exists = check_filename_exists(nama_file)
+        
+        return jsonify({
+            'exists': exists,
+            'message': 'Nama file sudah ada' if exists else 'Nama file tersedia'
+        })
+        
+    except Exception as e:
+        print(f"Error checking filename: {e}")
+        return jsonify({'exists': False, 'message': 'Error checking filename'}), 500
 
 @app.route('/list_files')
 def list_files():
@@ -2021,17 +2082,36 @@ def upload_file():
             
     if request.method == 'GET':
         session['data_available'] = False
+        
+        # Ambil daftar nama file yang sudah ada dari database/storage
+        existing_files = get_existing_filenames()  # Implementasikan fungsi ini
+        
         return render_template(
             'upload.html',
             flags=FLAGS,
             role_access=role_access,
-            fullname=fullname
+            fullname=fullname,
+            existing_files=existing_files  # Kirim data ke template
         )
     elif request.method == 'POST':
         flag = request.form.get('flag')
         nama_file = request.form.get('nama_file')
         uploaded_files = request.files.getlist('file')
         total_file_size = 0
+        
+        if not uploaded_files or not any(f.filename for f in uploaded_files):
+            flash("No files selected for upload.")
+            return redirect(url_for('upload_file'))
+        
+        # Validasi input
+        if not flag or not nama_file or not uploaded_files:
+            flash('Semua field harus diisi', 'error')
+            return redirect(url_for('upload_file'))
+        
+        # Cek duplikasi nama file
+        if check_filename_exists(nama_file):
+            flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
+            return redirect(url_for('upload_file'))
         
         for file in uploaded_files:
             file_size = len(file.read())
@@ -2099,6 +2179,12 @@ def task_status(task_id):
         processed_data = result["result"]
         role_access = session.get('role_access')
         fullname = session.get('fullname')
+        
+        # PERBAIKAN: Simpan processed_data ke session dan uploaded_data
+        session['processed_data'] = processed_data
+        global uploaded_data
+        uploaded_data = processed_data
+        session['data_available'] = True
         
         flash("File berhasil diupload!")
     
@@ -2213,10 +2299,26 @@ def task_status_big_size_file_api(task_id):
 
 @app.route('/download')
 def download_file():
-    if not session.get('data_available') or uploaded_data is None:
+    # Cek data availability dengan prioritas
+    processed_data = None
+
+    # Prioritas 1: uploaded_data
+    if uploaded_data is not None:
+        processed_data = uploaded_data
+    elif session.get('processed_data'):
+        processed_data = session.get('processed_data')
+    elif not session.get('data_available'):
         return '''
                 <script>
                     alert("No File data to Download!");
+                    window.location.href = "/upload";
+                </script>
+            '''
+
+    if processed_data is None:
+        return '''
+                <script>
+                    alert("No processed data available!");
                     window.location.href = "/upload";
                 </script>
             '''
@@ -2227,128 +2329,224 @@ def download_file():
     if not os.path.exists(directory):
         os.makedirs(directory)
     output_file = os.path.join(directory, f'file_{current_datetime}.xlsx')
-    
-    # Define facility dataframes with their sheet names
-    facilities = {
-        'fAktifKreditPembiayaan': active_facility_1,
-        'fLunasKreditPembiayaan': closed_facility_1,
-        'fAktifLC': active_facility_2,
-        'fLunasLC': closed_facility_2,
-        'fAktifBankGaransi': active_facility_3,
-        'fLunasBankGaransi': closed_facility_3,
-        'fAktifLainnya': active_facility_4,
-        'fLunasLainnya': closed_facility_4,
-        'fAktifSuratBerharga': active_facility_5,
-        'fLunasSuratBerharga': closed_facility_5
+
+    # Debug processed_data
+    print("=== DEBUG PROCESSED_DATA ===")
+    if processed_data:
+        for key, value in processed_data.items():
+            if key.startswith('table_data'):
+                data_type = type(value).__name__
+                data_len = len(str(value)) if value else 0
+                is_html = isinstance(value, str) and '<table' in value
+                print(f"{key}: type={data_type}, len={data_len}, is_html={is_html}")
+
+    facilities = {}
+
+    facility_keys = {
+        'fAktifKreditPembiayaan': 'table_data_af_1',
+        'fAktifLC': 'table_data_af_2', 
+        'fAktifBankGaransi': 'table_data_af_3',
+        'fAktifLainnya': 'table_data_af_4',
+        'fAktifSuratBerharga': 'table_data_af_5',
+        'fLunasKreditPembiayaan': 'table_data_cf_1',
+        'fLunasLC': 'table_data_cf_2',
+        'fLunasBankGaransi': 'table_data_cf_3', 
+        'fLunasLainnya': 'table_data_cf_4',
+        'fLunasSuratBerharga': 'table_data_cf_5'
     }
-    
-    # Create a new dataframe that combines all active facilities
+
+    def convert_to_dataframe(data, sheet_name):
+        try:
+            if not data:
+                return pd.DataFrame()
+
+            if isinstance(data, str):
+                if '<table' in data:
+                    from io import StringIO
+                    try:
+                        df_list = pd.read_html(StringIO(data), header=0)
+                        if df_list:
+                            df = df_list[0]
+                            df.columns = [str(col).strip() for col in df.columns]
+                            return df
+                    except:
+                        return parse_html_table_manually(data)
+                else:
+                    import json
+                    try:
+                        return pd.DataFrame(json.loads(data))
+                    except:
+                        return pd.DataFrame()
+            elif isinstance(data, pd.DataFrame):
+                return data.copy()
+            elif isinstance(data, list):
+                if len(data) > 0 and isinstance(data[0], dict):
+                    return pd.DataFrame(data)
+                elif len(data) > 1:
+                    return pd.DataFrame(data[1:], columns=data[0])
+                else:
+                    return pd.DataFrame(data)
+            elif isinstance(data, dict):
+                return pd.DataFrame([data])
+        except Exception as e:
+            print(f"Error converting {sheet_name}: {e}")
+        return pd.DataFrame()
+
+    def parse_html_table_manually(html_string):
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_string, 'html.parser')
+            table = soup.find('table')
+            if not table:
+                return pd.DataFrame()
+
+            headers = []
+            header_row = table.find('tr')
+            if header_row:
+                headers = [th.get_text().strip() for th in header_row.find_all(['th', 'td'])]
+
+            rows = []
+            for tr in table.find_all('tr')[1:]:
+                row = [td.get_text().strip() for td in tr.find_all(['td', 'th'])]
+                if row:
+                    rows.append(row)
+
+            if headers and rows:
+                max_cols = len(headers)
+                normalized_rows = []
+                for row in rows:
+                    if len(row) < max_cols:
+                        row.extend([''] * (max_cols - len(row)))
+                    elif len(row) > max_cols:
+                        row = row[:max_cols]
+                    normalized_rows.append(row)
+
+                return pd.DataFrame(normalized_rows, columns=headers)
+
+        except Exception as e:
+            print(f"Error in manual parsing: {e}")
+        return pd.DataFrame()
+
+    # Convert semua data fasilitas
+    for sheet_name, data_key in facility_keys.items():
+        table_data = processed_data.get(data_key)
+        df = convert_to_dataframe(table_data, sheet_name)
+        facilities[sheet_name] = df
+
+        if not df.empty:
+            print(f"SUCCESS - {sheet_name}: {len(df)} rows")
+        else:
+            print(f"EMPTY - {sheet_name}")
+
+    # Gabungkan fasilitas aktif
     all_active_facilities = []
-    active_facility_dfs = {
-        'Kredit/Pembiayaan': active_facility_1,
-        'LC': active_facility_2,
-        'Bank Garansi': active_facility_3,
-        'Lainnya': active_facility_4,
-        'Surat Berharga': active_facility_5
+    active_facility_mapping = {
+        'fAktifKreditPembiayaan': {
+            'sheet_key': 'table_data_af_1',
+            'jenis_column': ['jenisKreditPembiayaanKet', 'Jenis Kredit/Pembiayaan']
+        },
+        'fAktifLC': {
+            'sheet_key': 'table_data_af_2',
+            'jenis_column': ['jenisLcKet', 'Jenis L/C']
+        },
+        'fAktifBankGaransi': {
+            'sheet_key': 'table_data_af_3',
+            'jenis_column': ['jenisGaransiKet', 'Jenis Garansi']
+        },
+        'fAktifLainnya': {
+            'sheet_key': 'table_data_af_4',
+            'jenis_column': ['jenisFasilitasKet', 'Jenis Fasilitas']
+        },
+        'fAktifSuratBerharga': {
+            'sheet_key': 'table_data_af_5',
+            'jenis_column': ['jenisSuratBerharga', 'Jenis Surat Berharga']
+        }
     }
-    
-    # Field mappings for each facility type
-    field_mappings = {
-        'Kredit/Pembiayaan': {'jenis': 'Jenis Kredit/Pembiayaan'},
-        'LC': {'jenis': 'Jenis L/C'},
-        'Bank Garansi': {'jenis': 'Jenis Garansi'},
-        'Lainnya': {'jenis': 'Jenis Fasilitas'},
-        'Surat Berharga': {'jenis': 'Jenis Surat Berharga'}
-    }
-    
-    for facility_type, df in active_facility_dfs.items():
+
+    # Define the columns we want to keep
+    required_columns = [
+        'Nama Debitur/Calon Debitur',
+        'Nomor Laporan',
+        'Nomor Identitas',
+        'Kreditur/Pelapor',
+        'Kode Kolektibilitas Saat ini',
+        'Kolektibilitas Saat ini'
+    ]
+
+    for facility_name, facility_info in active_facility_mapping.items():
+        df = facilities.get(facility_name)
         if df is not None and not df.empty:
             df_copy = df.copy()
             
-            # Ensure required columns exist
-            required_columns = [
-                'Nama Debitur/Calon Debitur', 
-                'Nomor Laporan', 
-                'Nomor Identitas', 
-                'Kreditur/Pelapor',
-                'Kode Kolektibilitas Saat ini',
-                'Kolektibilitas Saat ini'
-            ]
+            # Find the correct jenis column
+            jenis_value = None
+            for col in facility_info['jenis_column']:
+                if col in df_copy.columns:
+                    jenis_value = df_copy[col].iloc[0] if len(df_copy) > 0 else facility_name
+                    break
             
-            # Add missing columns with empty values if needed
-            for col in required_columns:
-                if col not in df_copy.columns:
-                    df_copy[col] = ''
+            # Keep only the required columns
+            available_columns = [col for col in required_columns if col in df_copy.columns]
+            df_copy = df_copy[available_columns]
             
-            # Map the specific "Jenis" field based on facility type
-            jenis_field = field_mappings[facility_type]['jenis']
-            if jenis_field in df_copy.columns:
-                df_copy['Jenis'] = df_copy[jenis_field]
-            else:
-                df_copy['Jenis'] = facility_type
-                
-            # Select only the required columns
-            selected_cols = [
-                'Nama Debitur/Calon Debitur', 
-                'Nomor Laporan', 
-                'Nomor Identitas', 
-                'Kreditur/Pelapor',
-                'Jenis',
-                'Kode Kolektibilitas Saat ini',
-                'Kolektibilitas Saat ini'
-            ]
-            
-            # Only keep columns that exist in the dataframe
-            available_cols = [col for col in selected_cols if col in df_copy.columns]
-            df_subset = df_copy[available_cols]
-            
-            all_active_facilities.append(df_subset)
-    
-    # Combine all active facilities into one dataframe
+            # Add the facility type column with the specific description
+            df_copy['Jenis Pembiayaan'] = jenis_value if jenis_value is not None else facility_name
+            all_active_facilities.append(df_copy)
+
     combined_active_facilities = pd.DataFrame()
     if all_active_facilities:
-        combined_active_facilities = pd.concat(all_active_facilities, ignore_index=True)
-        
-        # Add a reset 'No' column starting from 1
-        combined_active_facilities.insert(0, 'No', range(1, len(combined_active_facilities) + 1))
-    
-    # Add the combined active facilities to the dictionary
+        try:
+            combined_active_facilities = pd.concat(all_active_facilities, ignore_index=True, sort=False)
+            
+            # Add the 'No' column with sequential numbering
+            combined_active_facilities.insert(0, 'No', range(1, len(combined_active_facilities) + 1))
+            
+            # Reorder columns to put 'No' first and 'Jenis Pembiayaan' in the correct position
+            final_columns = ['No'] + required_columns[:]
+            final_columns.insert(5, 'Jenis Pembiayaan')  # Insert after Kreditur/Pelapor
+            
+            # Keep only the columns we want in the final output
+            available_final_columns = [col for col in final_columns if col in combined_active_facilities.columns]
+            combined_active_facilities = combined_active_facilities[available_final_columns]
+            
+            print(f"COMBINED - Active facilities: {len(combined_active_facilities)} rows")
+        except Exception as e:
+            print(f"Error combining active facilities: {e}")
+
     facilities['SemuaFasilitasAktif'] = combined_active_facilities
-    
-    # Write to Excel file
-    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-        # Write the combined active facilities sheet first
-        if 'SemuaFasilitasAktif' in facilities:
+
+    try:
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            # Write SemuaFasilitasAktif sheet first
             df = facilities['SemuaFasilitasAktif']
             if df is not None and not df.empty:
-                # Ensure the specific columns are in the right order
-                columns_order = [
-                    'No',
-                    'Nama Debitur/Calon Debitur',
-                    'Nomor Laporan',
-                    'Nomor Identitas',
-                    'Kreditur/Pelapor',
-                    'Jenis',
-                    'Kode Kolektibilitas Saat ini',
-                    'Kolektibilitas Saat ini'
-                ]
-                
-                # Only include columns that exist in the dataframe
-                final_columns = [col for col in columns_order if col in df.columns]
-                df = df[final_columns]
-                
                 df.to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
+                print(f"EXCEL - Wrote SemuaFasilitasAktif: {len(df)} rows")
             else:
-                pd.DataFrame(columns=columns_order).to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
-        
-        # Write the rest of the sheets
-        for sheet_name, df in facilities.items():
-            if sheet_name != 'SemuaFasilitasAktif':  # Skip as it's already written
-                # Write empty dataframe if None
-                if df is None:
-                    pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
-                else:
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+                pd.DataFrame().to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
+
+            # Write other sheets
+            for sheet_name, df in facilities.items():
+                if sheet_name != 'SemuaFasilitasAktif':
+                    try:
+                        clean_sheet_name = sheet_name.replace('/', '_').replace('\\', '_')[:31]
+                        if df is not None and not df.empty:
+                            df.to_excel(writer, sheet_name=clean_sheet_name, index=False)
+                        else:
+                            pd.DataFrame().to_excel(writer, sheet_name=clean_sheet_name, index=False)
+                    except Exception as e:
+                        print(f"Error writing sheet {sheet_name}: {e}")
+
+        print(f"EXCEL - File created successfully: {output_file}")
+
+    except Exception as e:
+        print(f"Error creating Excel file: {e}")
+        return f'''
+                <script>
+                    alert("Error creating Excel file: {str(e)}");
+                    window.location.href = "/upload";
+                </script>
+            '''
 
     return send_file(output_file, as_attachment=True)
 
@@ -2494,7 +2692,6 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
     # Format tanggal untuk query
     uploadDate_str = uploadDate
     if 'T' in uploadDate:
-        # Ganti T dengan spasi untuk konsistensi
         uploadDate_str = uploadDate.replace('T', ' ')
     
     # Definisikan tabel dan nama sheet
@@ -2526,103 +2723,152 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         'slik_fasilitas_lunas_surat_berharga': 'Fasilitas Lunas Surat Berharga'
     }
     
+    # Mapping kolom yang umum digunakan di semua sheet
+    def get_column_mapping(sheet_name):
+        # Base mapping yang berlaku untuk semua sheet
+        base_mapping = {
+            'No': 'No',
+            'namaDebitur': 'Nama Debitur/Calon Debitur',
+            'npwp': 'Nomor Identitas',
+            'nomorIdentitas': 'Nomor Identitas',
+            'alamat': 'Alamat',
+            'ljkKet': 'Kreditur/Pelapor',
+            'kreditur': 'Kreditur/Pelapor',
+            'plafon': 'Plafon',
+            'kualitas': 'Kode Kolektibilitas Saat ini',
+            'kodeKolektibilitas': 'Kode Kolektibilitas Saat ini',
+            'kualitasKet': 'Kolektibilitas Saat ini',
+            'kolektibilitas': 'Kolektibilitas Saat ini',
+            'tahunBulan24': 'Periode Pelaporan Terakhir',
+            'urutanFile': 'File ke',
+            'tglAktaPendirian': 'Tanggal Lahir/Pendirian',
+            'kodeValuta': 'Valuta',
+            'valuta': 'Valuta',
+            'valutaKode': 'Valuta',
+            'jumlahHariTunggakan': 'Hari Keterlambatan'
+        }
+        
+        # Mapping spesifik berdasarkan jenis sheet
+        if 'Rangkuman' in sheet_name:
+            specific_mapping = {
+                'nomorLaporan': 'Nomor Laporan',
+                'jenisPembiayaan': 'Jenis Kredit/Pembiayaan'
+            }
+        elif 'Kredit Pembiayaan' in sheet_name:
+            specific_mapping = {
+                'jenisKreditPembiayaanKet': 'Jenis Kredit/Pembiayaan',
+                'jenisPenggunaanKet': 'Jenis Penggunaan',
+                'bakiDebet': 'Oustanding/Baki Debet',
+                'tunggakanPokok': 'Tunggakan Pokok',
+                'tunggakanBunga': 'Tunggakan Bunga',
+                'denda': 'Denda'
+            }
+        elif 'LC' in sheet_name:
+            specific_mapping = {
+                'jenisLcKet': 'Jenis L/C',
+                'tujuanLcKet': 'Tujuan L/C',
+                'nominalLc': 'Oustanding/Baki Debet',
+                'tanggalWanPrestasi': 'Tanggal Wan prestasi'
+            }
+        elif 'Bank Garansi' in sheet_name:
+            specific_mapping = {
+                'jenisGaransiKet': 'Jenis Garansi',
+                'tujuanGaransiKet': 'Tujuan Garansi',
+                'nominalBg': 'Oustanding/Baki Debet',
+                'tanggalWanPrestasi': 'Tanggal Wan Prestasi'
+            }
+        elif 'Lainnya' in sheet_name:
+            specific_mapping = {
+                'jenisFasilitasKet': 'Jenis Fasilitas',
+                'nominalJumlahKwajibanIDR': 'Oustanding/Baki Debet'
+            }
+        elif 'Surat Berharga' in sheet_name:
+            specific_mapping = {
+                'jenisSuratBerharga': 'Jenis Surat Berharga',
+                'nilaiPasar': 'Nilai Pasar',
+                'nilaiPerolehan': 'Nilai Perolehan',
+                'nominalSb': 'Outstanding/Baki Debet'
+            }
+        else:
+            specific_mapping = {}
+        
+        # Gabungkan base mapping dengan specific mapping
+        return {**base_mapping, **specific_mapping}
+    
     # Buat Excel workbook
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
         # Format untuk highlight baris kuning
-        highlight_format = workbook.add_format({
-            'bg_color': '#FFFF00',  # Warna kuning
-            'border': 1
-        })
-        
-        # Format normal
-        normal_format = workbook.add_format({
-            'border': 1
-        })
+        highlight_format = workbook.add_format({'bg_color': '#FFFF00', 'border': 1})
+        normal_format = workbook.add_format({'border': 1})
+        header_format = workbook.add_format({'bold': True, 'border': 1})
         
         data_found = False
         for table in tables:
             try:
-                query = f"""
-                SELECT * FROM {table} 
-                WHERE periodeData = ? AND username = ? AND namaFileUpload = ?
-                """
-                print(f"Querying SELECT * FROM {table} WHERE periodeData = {periodeData} AND username = {username} AND namaFileUpload = {namaFileUpload}")
+                query = f"SELECT * FROM {table} WHERE periodeData = ? AND username = ? AND namaFileUpload = ?"
+                print(f"Querying {table}...")
                 cur.execute(query, (periodeData, username, namaFileUpload))
 
                 columns = [column[0] for column in cur.description]
                 rows = cur.fetchall()
                 df = pd.DataFrame.from_records(rows, columns=columns)
-                print(f"{df}")
-
                 print(f"Found {len(df)} rows for table {table}")
+                
+                # Drop kolom yang tidak perlu
                 drop_cols = ['periodeData', 'username', 'namaFileUpload', 'uploadDate', 'id']
                 df.drop(columns=[col for col in drop_cols if col in df.columns], errors='ignore', inplace=True)
 
-                # Tambahkan kolom No (nomor urut mulai dari 1)
+                # Tambahkan kolom No
                 df.insert(0, 'No', range(1, len(df) + 1))
 
                 sheet_name = sheet_name_mapping.get(table, table)[:31]
                 
-                # Buat worksheet tanpa menulis data dulu
+                # Rename kolom
+                mapping = get_column_mapping(sheet_name)
+                rename_dict = {old: new for old, new in mapping.items() if old in df.columns}
+                df.rename(columns=rename_dict, inplace=True)
+                
+                # Buat worksheet
                 worksheet = workbook.add_worksheet(sheet_name)
                 
                 # Tulis header
                 for col_idx, col_name in enumerate(df.columns):
-                    worksheet.write(0, col_idx, col_name, normal_format)
+                    worksheet.write(0, col_idx, col_name, header_format)
                 
-                # Identifikasi baris yang perlu di-highlight berdasarkan kodeKolektibilitas atau kualitas
-                kolektibilitas_col = None
-                kualitas_col = None
-                
-                # Cari indeks kolom untuk kodeKolektibilitas dan kualitas
+                # Cari kolom untuk highlight
+                highlight_col = None
                 for i, col_name in enumerate(df.columns):
-                    if col_name == 'kodeKolektibilitas':
-                        kolektibilitas_col = i
-                    elif col_name == 'kualitas':
-                        kualitas_col = i
+                    if col_name == 'Kode Kolektibilitas Saat ini':
+                        highlight_col = i
+                        break
                 
                 # Tulis data dengan format kondisional
                 for row_idx in range(len(df)):
                     need_highlight = False
-                    
-                    # Periksa kodeKolektibilitas jika kolom tersebut ada
-                    if kolektibilitas_col is not None:
-                        kolektibilitas_value = df.iloc[row_idx, kolektibilitas_col]
-                        # Periksa jika nilai bukan 1 (dan bukan nan atau None)
-                        if pd.notna(kolektibilitas_value) and str(kolektibilitas_value) != '1':
+                    if highlight_col is not None:
+                        value = df.iloc[row_idx, highlight_col]
+                        if pd.notna(value) and str(value) != '1':
                             need_highlight = True
                     
-                    # Periksa kualitas jika kolom tersebut ada
-                    if kualitas_col is not None:
-                        kualitas_value = df.iloc[row_idx, kualitas_col]
-                        # Periksa jika nilai bukan 1 (dan bukan nan atau None)
-                        if pd.notna(kualitas_value) and str(kualitas_value) != '1':
-                            need_highlight = True
-                    
-                    # Pilih format yang sesuai
                     format_to_use = highlight_format if need_highlight else normal_format
-                    
-                    # Tulis data baris ke worksheet dengan format yang sesuai
-                    excel_row = row_idx + 1  # +1 karena baris 0 adalah header
+                    excel_row = row_idx + 1
                     for col_idx in range(len(df.columns)):
-                        cell_value = df.iloc[row_idx, col_idx]
-                        worksheet.write(excel_row, col_idx, cell_value, format_to_use)
+                        worksheet.write(excel_row, col_idx, df.iloc[row_idx, col_idx], format_to_use)
                 
                 data_found = True
-                print(f"Wrote data to sheet {sheet_name} with conditional formatting")
+                print(f"Wrote data to sheet {sheet_name}")
             except Exception as e:
                 print(f"Error on table {table}: {str(e)}")
                 continue
         
-        # Jika tidak ada data, buat sheet "No Data"
+        # Jika tidak ada data
         if not data_found:
             pd.DataFrame({'Message': ['No data found for the specified criteria']}).to_excel(
                 writer, sheet_name='No Data', index=False)
     
-    # Reset pointer dan return
     output.seek(0)
     return output
     
@@ -2729,72 +2975,88 @@ def upload_big_size_file():
         )
 
     elif request.method == 'POST':
-        flag = request.form.get('flag')
-        nama_file = request.form.get('nama_file')
-        uploaded_files = request.files.getlist('file')
+        try:
+            flag = request.form.get('flag')
+            nama_file = request.form.get('nama_file')
+            uploaded_files = request.files.getlist('file')
 
-        if not uploaded_files or not any(f.filename for f in uploaded_files):
-            flash("No files selected for upload.")
-            return redirect(url_for('upload_big_size_file'))
+            if not uploaded_files or not any(f.filename for f in uploaded_files):
+                flash("No files selected for upload.")
+                return redirect(url_for('upload_big_size_file'))
+            
+            # Validasi input
+            if not flag or not nama_file or not uploaded_files:
+                flash('Semua field harus diisi', 'error')
+                return redirect(url_for('upload_big_size_file'))
+            
+            # Cek duplikasi nama file
+            if check_filename_exists(nama_file):
+                flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
+                return redirect(url_for('upload_big_size_file'))
 
-        # Hitung total ukuran
-        total_file_size = 0
-        for f in uploaded_files:
-            if f and f.filename:
-                f.seek(0, 2)  # Go to end of file
-                total_file_size += f.tell()  # Get current position (file size)
-                f.seek(0)  # Reset file pointer to beginning
+            # Hitung total ukuran
+            total_file_size = 0
+            for f in uploaded_files:
+                if f and f.filename:
+                    f.seek(0, 2)  # Go to end of file
+                    total_file_size += f.tell()  # Get current position (file size)
+                    f.seek(0)  # Reset file pointer to beginning
 
-        if total_file_size > MAX_FILE_BIG_SIZE:
-            flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
-            return redirect(url_for('upload_big_size_file'))
+            if total_file_size > MAX_FILE_BIG_SIZE:
+                flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
+                return redirect(url_for('upload_big_size_file'))
 
-        # Generate unique task id
-        task_id = str(uuid.uuid4())
-        current_datetime = datetime.now()
+            # Generate unique task id
+            task_id = str(uuid.uuid4())
+            current_datetime = datetime.now()
 
-        # Simpan file dalam bentuk bytes
-        total_file_size = 0
-        temp_files = []
-        for file in uploaded_files:
-            if file and file.filename:
-                file_content = file.read()
-                temp_files.append({
-                    'filename': file.filename,
-                    'content': file_content
-                })
+            # Simpan file dalam bentuk bytes
+            total_file_size = 0
+            temp_files = []
+            for file in uploaded_files:
+                if file and file.filename:
+                    file_content = file.read()
+                    temp_files.append({
+                        'filename': file.filename,
+                        'content': file_content
+                    })
 
-        # Simpan task ke queue
-        user_info = {
-            "username": username,
-            "role_access": role_access,
-            "fullname": fullname,
-            "flag": flag,
-            "nama_file": nama_file
-        }
-        
-        # Masukkan ke task_progress
-        task_progress[task_id] = {
-            'progress': 0,
-            'status': 'Processing',
-            'key': f"{username}_{nama_file}_{flag}",
-            'temp_metadata': {
-                'username': username,
-                'namaFileUpload': nama_file,
-                'uploadDate': current_datetime,
-                'task_id': task_id
+            # Simpan task ke queue
+            user_info = {
+                "username": username,
+                "role_access": role_access,
+                "fullname": fullname,
+                "flag": flag,
+                "nama_file": nama_file
             }
-        }
+            
+            # Masukkan ke task_progress
+            task_progress[task_id] = {
+                'progress': 0,
+                'status': 'Processing',
+                'key': f"{username}_{nama_file}_{flag}",
+                'temp_metadata': {
+                    'username': username,
+                    'namaFileUpload': nama_file,
+                    'uploadDate': current_datetime,
+                    'task_id': task_id
+                }
+            }
 
-        # Masukkan ke queue untuk diproses
-        task_queue.put((task_id, temp_files, user_info))
-        
-        # Simpan task_id di session dan set flag upload_done
-        session['task_id'] = task_id
-        session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
+            # Masukkan ke queue untuk diproses
+            task_queue.put((task_id, temp_files, user_info))
+            
+            # Simpan task_id di session dan set flag upload_done
+            session['task_id'] = task_id
+            session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
 
-        flash("Files are being processed in the background.")
-        return redirect(url_for('upload_big_size_file'))
+            flash("Files are being processed in the background.", "success")
+            return redirect(url_for('upload_big_size_file'))
+        except Exception as e:
+            print(f"Error during upload: {e}")
+            flash(f'Error during upload: {e}', 'error')
+            return redirect(url_for('upload_big_size_file'))
+            
 
 @app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
 def download_excel(periodeData, username, namaFileUpload, uploadDate):
