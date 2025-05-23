@@ -918,7 +918,13 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
         progress = 10 + int(70 * (idx / total_files))
         task_progress[task_id]['progress'] = progress
         
-        if uploaded_file and uploaded_file.filename.endswith('.txt'):
+        filename = uploaded_file.filename
+        if not filename.lower().endswith('.txt'):
+            return {"error": "File must have a .txt extension"}
+        if uploaded_file.mimetype != 'text/plain':
+            return {"error": "Uploaded file must be a plain text (.txt) file"}
+        
+        if uploaded_file:
             try:
                 encodings = ['utf-8', 'utf-16', 'latin-1', 'ascii']
                 content = None
