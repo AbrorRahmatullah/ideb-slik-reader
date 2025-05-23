@@ -15,6 +15,7 @@ from flask import Flask, request, render_template, redirect, url_for, flash, ses
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from werkzeug.datastructures import FileStorage
+from werkzeug.utils import secure_filename
 from io import BytesIO
 from dateutil import parser
 
@@ -26,7 +27,7 @@ app.secret_key = 'supersecretkey'
 bcrypt = Bcrypt(app)
 
 # Configure session timeout to 10 minutes
-app.permanent_session_lifetime = timedelta(hours=5)
+app.permanent_session_lifetime = timedelta(minutes=5)
 
 # Temporary storage for DataFrame
 uploaded_data = None
@@ -56,6 +57,7 @@ closed_facility_3 = None
 closed_facility_4 = None
 closed_facility_5 = None
 
+ALLOWED_EXTENSIONS = {'.txt'}
 # Available flags
 FLAGS = ["Individual", "Perusahaan"]
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -68,6 +70,16 @@ task_results = {}
 task_progress = {}
 conn = get_db_connection()
 cur = conn.cursor()
+
+# Tambahkan helper function
+def is_allowed_file(filename, mimetype):
+    return (
+        os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS and
+        mimetype == 'text/plain'
+    )
+    
+def is_txt_file(filename):
+    return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
 
 # --- Utility Functions ---
 def sanitize_folder_name(nama_file):
@@ -182,6 +194,14 @@ def process_files_worker():
             
             # Simpan setiap file ke folder lokal
             for idx, file_data in enumerate(files):
+                filename = secure_filename(file_data['filename'])
+                
+                # Validasi ekstensi dan MIME type (text/plain)
+                mimetype = file_data.get('mimetype', 'text/plain')  # default to 'text/plain' if not provided
+                
+                if not is_allowed_file(filename, mimetype):
+                    raise ValueError(f"Invalid file type for {filename}. Only .txt files are allowed.")
+                
                 # Simpan file ke local storage
                 file_path = save_file_to_local(
                     file_data['content'], 
@@ -193,8 +213,9 @@ def process_files_worker():
                 file_stream = BytesIO(file_data['content'])
                 file_obj = FileStorage(
                     stream=file_stream,
-                    filename=file_data['filename'],
-                    name='file'
+                    filename=filename,
+                    name='file',
+                    content_type=mimetype
                 )
                 uploaded_files.append(file_obj)
                 
@@ -563,8 +584,14 @@ def change_password():
         username = session['username']
 
         if new_password != confirm_password:
-            flash("New passwords do not match.")
-            return render_template('change_password.html')
+            # flash("New passwords do not match.")
+            # return render_template('change_password.html')
+            return '''
+                <script>
+                    alert("New passwords do not match.");
+                    window.location.href = "/change_password"; // Redirect setelah alert
+                </script>
+            '''
 
         conn = get_db_connection()
         cur = conn.cursor()
@@ -574,8 +601,14 @@ def change_password():
         user = cur.fetchone()
 
         if not user or not bcrypt.check_password_hash(user[0], current_password):
-            flash("Current password is incorrect.")
-            return render_template('change_password.html')
+            # flash("Current password is incorrect.")
+            # return render_template('change_password.html')
+            return '''
+                    <script>
+                        alert("Current password is incorrect.");
+                        window.location.href = "/change_password"; // Redirect setelah alert
+                    </script>
+                '''
         else:
             # Hash the new password and update the database
             new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
@@ -2116,8 +2149,14 @@ def upload_file():
         
         # Cek duplikasi nama file
         if check_filename_exists(nama_file):
-            flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
-            return redirect(url_for('upload_file'))
+            # flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
+            # return redirect(url_for('upload_file'))
+            return '''
+                <script>
+                    alert("Nama File sudah ada, harap masukkan nama file yang lain!");
+                    window.location.href = "/upload_file";
+                </script>
+            '''
         
         for file in uploaded_files:
             file_size = len(file.read())
@@ -2192,7 +2231,7 @@ def task_status(task_id):
         uploaded_data = processed_data
         session['data_available'] = True
         
-        flash("File berhasil diupload!")
+        # flash("File berhasil diupload!")
     
         return render_template(
             'upload.html',
@@ -2253,9 +2292,15 @@ def task_status_big_size_file(task_id):
         return redirect(url_for('upload_big_size_file'))
 
     # Jika berhasil → arahkan ke halaman utama upload dengan flash message
-    flash("File berhasil diupload!")
-    return redirect(url_for('upload_big_size_file'))
-
+    # flash("File berhasil diupload!")
+    # return redirect(url_for('upload_big_size_file'))
+    return '''
+        <script>
+            alert("File berhasil diupload!");
+            window.location.href = "/upload-big-size"; // Redirect setelah alert
+        </script>
+    '''
+    
 @app.route('/api/task-status/<task_id>', methods=['GET'])
 def api_task_status(task_id):
     """API endpoint to check task status"""
@@ -2997,20 +3042,42 @@ def upload_big_size_file():
             
             # Cek duplikasi nama file
             if check_filename_exists(nama_file):
-                flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
-                return redirect(url_for('upload_big_size_file'))
+                # flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
+                # return redirect(url_for('upload_big_size_file'))
+                return '''
+                    <script>
+                        alert("Nama File sudah ada, harap masukkan nama file yang lain!");
+                        window.location.href = "/upload-big-size";
+                    </script>
+                '''
 
-            # Hitung total ukuran
+            # Hitung total ukuran dan validasi ekstensi file
             total_file_size = 0
             for f in uploaded_files:
                 if f and f.filename:
+                    if not is_txt_file(f.filename):
+                        # flash(f"File '{f.filename}' bukan file .txt. Hanya file .txt yang diperbolehkan.", "error")
+                        # return redirect(url_for('upload_big_size_file'))
+                        return '''
+                            <script>
+                                alert("File yang diupload bukan file .txt. Hanya file .txt yang diperbolehkan.");
+                                window.location.href = "/upload-big-size";
+                            </script>
+                        '''
+
                     f.seek(0, 2)  # Go to end of file
                     total_file_size += f.tell()  # Get current position (file size)
                     f.seek(0)  # Reset file pointer to beginning
 
             if total_file_size > MAX_FILE_BIG_SIZE:
-                flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
-                return redirect(url_for('upload_big_size_file'))
+                # flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
+                # return redirect(url_for('upload_big_size_file'))
+                return '''
+                    <script>
+                        alert("Total file yang diupload terlalu besar. Maksimum 200MB!");
+                        window.location.href = "/upload-big-size";
+                    </script>
+                '''
 
             # Generate unique task id
             task_id = str(uuid.uuid4())
@@ -3056,12 +3123,24 @@ def upload_big_size_file():
             session['task_id'] = task_id
             session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
 
-            flash("Files are being processed in the background.", "success")
-            return redirect(url_for('upload_big_size_file'))
+            # flash("Files are being processed in the background.", "success")
+            # return redirect(url_for('upload_big_size_file'))
+            return '''
+                <script>
+                    alert("Files are being processed in the background.");
+                    window.location.href = "/upload-big-size";
+                </script>
+            '''
         except Exception as e:
             print(f"Error during upload: {e}")
-            flash(f'Error during upload: {e}', 'error')
-            return redirect(url_for('upload_big_size_file'))
+            # flash(f'Error during upload: {e}', 'error')
+            # return redirect(url_for('upload_big_size_file'))
+            return '''
+                    <script>
+                        alert("Error during upload: {e}");
+                        window.location.href = "/upload-big-size";
+                    </script>
+                '''
             
 
 @app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
