@@ -253,6 +253,20 @@ def process_files_worker():
                                 # Mark as processed successfully
                                 file_processed = True
                                 break  # Exit encoding loop since we found a working encoding
+                            
+                            elif 'individual' in data and 'posisiDataTerakhir' in data['individual']:
+                                posisiDataTerakhir = data['individual']['posisiDataTerakhir']
+                                date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
+                                json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
+                                
+                                # Only set periode_data if it's still None or if this is the first successful file
+                                if periode_data is None or first_successful_file:
+                                    periode_data = json_posisiDataTerakhir
+                                    first_successful_file = False
+                                
+                                # Mark as processed successfully
+                                file_processed = True
+                                break  # Exit encoding loop since we found a working encoding
                                 
                         except UnicodeDecodeError:
                             # Try next encoding
@@ -990,7 +1004,10 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 }
                 
                 json_header = data['header']
-                posisiDataTerakhir = data['perusahaan']['posisiDataTerakhir']
+                if 'perusahaan' in data and isinstance(data['perusahaan'], dict) and data['perusahaan'].get('posisiDataTerakhir'):
+                    posisiDataTerakhir = data['perusahaan']['posisiDataTerakhir']
+                elif 'individual' in data and isinstance(data['individual'], dict) and data['individual'].get('posisiDataTerakhir'):
+                    posisiDataTerakhir = data['individual']['posisiDataTerakhir']
                 date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
                 json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
                 
@@ -1044,17 +1061,42 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     del json_individual['fasilitas']
                     del json_individual['ringkasanFasilitas']
 
-                    uploaded_data_2 = pd.DataFrame(json_individual, index=[0])
+                    uploaded_data_2 = pd.DataFrame(json_individual, index=[0]).fillna('')
+                    uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0]).fillna('')
+                    uploaded_data_4 = pd.DataFrame(json_dpdebitur).fillna('')
+                    uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0]).fillna('')
+                    
+                    extra = {
+                        'periodeData': json_posisiDataTerakhir,
+                        'username': user_info['username'],
+                        'namaFileUpload': user_info['nama_file'],
+                        'uploadDate': current_datetime
+                    }
+                    
+                    # Insert data ke database dengan pengecekan yang konsisten
+                    if json_individual:
+                        try:
+                            insert_data(cur, "slik_perusahaan", {
+                                "nomorLaporan": json_individual.get("nomorLaporan"),
+                                "posisiDataTerakhir": json_individual.get("posisiDataTerakhir"),
+                                "tanggalPermintaan": json_individual.get("tanggalPermintaan")
+                            }, extra_columns=extra)
+                            conn.commit()
+                        except Exception as e:
+                            return {"error": f"Error processing file: {e}"}
 
-                    # nomor_laporan = uploaded_data_2['nomorLaporan'].to_string(index=False)
+                    if json_paramPencarian:
+                        insert_data(cur, "slik_parameter_pencarian", json_paramPencarian, columns_to_remove, extra_columns=extra)
+                        conn.commit()
 
-                    uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0])
+                    if json_dpdebitur:
+                        for item in json_dpdebitur:
+                            insert_data(cur, "slik_data_pokok_debitur", item, columns_to_remove, extra_columns=extra)
+                        conn.commit()
 
-                    for debitur in json_dpdebitur:
-                        list_debitur.append(debitur)
-                    uploaded_data_4 = pd.DataFrame(list_debitur)
-
-                    uploaded_data_5 = pd.DataFrame(json_rFasilitas, index=[0])
+                    if json_rFasilitas:
+                        insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas, columns_to_remove, extra_columns=extra)
+                        conn.commit()
                     
                     if len(uploaded_files) > 1:
                     # table_data_6 = uploaded_data_6.to_html(classes="table table-striped", index=False)
@@ -1074,33 +1116,57 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         table_data_4 = uploaded_data_4.to_html(classes="table table-striped", index=False)
                         table_data_5 = uploaded_data_5.to_html(classes="table table-striped", index=False)
                     
-                    if len(json_fKreditPembiayan) >0 :
+                    # Fasilitas Kredit Pembiayaan
+                    if json_fKreditPembiayan:
+                        for item in json_fKreditPembiayan:
+                            insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item, columns_to_remove, extra_columns=extra)
+                        conn.commit()
+
                         uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan)
                         uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
                         if len(uploaded_data_6) > 0:
                             uploaded_data_6 = uploaded_data_6.assign(**{'urutanFile': idx})
                         list_uploaded_data_6.append(uploaded_data_6)
 
-                    if len(json_fLC) >0 :
+                    # Fasilitas LC
+                    if json_fLC:
+                        for item in json_fLC:
+                            insert_data(cur, "slik_fasilitas_lc", item, columns_to_remove, extra_columns=extra)
+                        conn.commit()
+
                         uploaded_data_7 = pd.DataFrame(json_fLC)
                         uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
                         if len(uploaded_data_7) > 0:
                             uploaded_data_7 = uploaded_data_7.assign(**{'urutanFile': idx})
                         list_uploaded_data_7.append(uploaded_data_7)
 
-                    if len(json_fGaransi) >0 :
+                    # Fasilitas Garansi
+                    if json_fGaransi:
+                        for item in json_fGaransi:
+                            insert_data(cur, "slik_fasilitas_garansi", item, columns_to_remove, extra_columns=extra)
+                        conn.commit()
+
                         uploaded_data_8 = pd.DataFrame(json_fGaransi)
                         uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
                         if len(uploaded_data_8) > 0:
                             uploaded_data_8 = uploaded_data_8.assign(**{'urutanFile': idx})
                         list_uploaded_data_8.append(uploaded_data_8)
 
-                    if len(json_fFasilitasLain) >0 :
+                    # Fasilitas Lainnya
+                    if json_fFasilitasLain:
+                        for item in json_fFasilitasLain:
+                            insert_data(cur, "slik_fasilitas_lainnya", item, columns_to_remove, extra_columns=extra)
+                        conn.commit()
+
                         uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                         uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
                         if len(uploaded_data_9) > 0:
                             uploaded_data_9 = uploaded_data_9.assign(**{'urutanFile': idx})
                         list_uploaded_data_9.append(uploaded_data_9)
+                        
+                    # Set session data availability
+                    if has_request_context():
+                        session['data_available'] = True
 
                 elif 'perusahaan' in data:
                     json_perusahaan = data['perusahaan']
@@ -2154,7 +2220,7 @@ def upload_file():
             return '''
                 <script>
                     alert("Nama File sudah ada, harap masukkan nama file yang lain!");
-                    window.location.href = "/upload_file";
+                    window.location.href = "/upload";
                 </script>
             '''
         
