@@ -27,7 +27,7 @@ app.secret_key = 'supersecretkey'
 bcrypt = Bcrypt(app)
 
 # Configure session timeout to 10 minutes
-app.permanent_session_lifetime = timedelta(minutes=5)
+app.permanent_session_lifetime = timedelta(minutes=30)
 
 # Temporary storage for DataFrame
 uploaded_data = None
