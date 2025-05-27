@@ -579,7 +579,7 @@ def login():
             session['fullname'] = fullname
             session['role_access'] = user[1]
             session['upload_done'] = True
-            return redirect(url_for('upload_file'))
+            return redirect(url_for('upload_big_size_file'))
         else:
             flash("Invalid username or password.")
     
@@ -2670,13 +2670,13 @@ def download_file():
 # Daftar tabel yang akan diekspor
 tables = [
     "slik_summary_fasilitas_aktif",
-    "slik_fasilitas_aktif_bank_garansi",
     "slik_fasilitas_aktif_kredit_pembiayaan",
+    "slik_fasilitas_aktif_bank_garansi",
     "slik_fasilitas_aktif_lainnya",
     "slik_fasilitas_aktif_lc",
     "slik_fasilitas_aktif_surat_berharga",
-    "slik_fasilitas_lunas_bank_garansi",
     "slik_fasilitas_lunas_kredit_pembiayaan",
+    "slik_fasilitas_lunas_bank_garansi",
     "slik_fasilitas_lunas_lainnya",
     "slik_fasilitas_lunas_lc",
     "slik_fasilitas_lunas_surat_berharga"
@@ -2814,13 +2814,13 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
     # Definisikan tabel dan nama sheet
     tables = [
         'slik_summary_fasilitas_aktif',
-        'slik_fasilitas_aktif_bank_garansi',
         'slik_fasilitas_aktif_kredit_pembiayaan',
+        'slik_fasilitas_aktif_bank_garansi',
         'slik_fasilitas_aktif_lainnya',
         'slik_fasilitas_aktif_lc',
         'slik_fasilitas_aktif_surat_berharga',
-        'slik_fasilitas_lunas_bank_garansi',
         'slik_fasilitas_lunas_kredit_pembiayaan',
+        'slik_fasilitas_lunas_bank_garansi',
         'slik_fasilitas_lunas_lainnya',
         'slik_fasilitas_lunas_lc',
         'slik_fasilitas_lunas_surat_berharga'
@@ -2828,13 +2828,13 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
     
     sheet_name_mapping = {
         'slik_summary_fasilitas_aktif': 'Rangkuman Fasilitas Aktif',
-        'slik_fasilitas_aktif_bank_garansi': 'Fasilitas Aktif Bank Garansi',
         'slik_fasilitas_aktif_kredit_pembiayaan': 'Fasilitas Aktif Kredit Pembiayaan',
+        'slik_fasilitas_aktif_bank_garansi': 'Fasilitas Aktif Bank Garansi',
         'slik_fasilitas_aktif_lainnya': 'Fasilitas Aktif Lainnya',
         'slik_fasilitas_aktif_lc': 'Fasilitas Aktif LC',
         'slik_fasilitas_aktif_surat_berharga': 'Fasilitas Aktif Surat Berharga',
-        'slik_fasilitas_lunas_bank_garansi': 'Fasilitas Lunas Bank Garansi',
         'slik_fasilitas_lunas_kredit_pembiayaan': 'Fasilitas Lunas Kredit Pembiayaan',
+        'slik_fasilitas_lunas_bank_garansi': 'Fasilitas Lunas Bank Garansi',
         'slik_fasilitas_lunas_lainnya': 'Fasilitas Lunas Lainnya',
         'slik_fasilitas_lunas_lc': 'Fasilitas Lunas LC',
         'slik_fasilitas_lunas_surat_berharga': 'Fasilitas Lunas Surat Berharga'
@@ -2871,7 +2871,7 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
                 'nomorLaporan': 'Nomor Laporan',
                 'jenisPembiayaan': 'Jenis Kredit/Pembiayaan'
             }
-        elif 'Kredit Pembiayaan' in sheet_name:
+        elif 'Kredit Pembiaya' in sheet_name:
             specific_mapping = {
                 'jenisKreditPembiayaanKet': 'Jenis Kredit/Pembiayaan',
                 'jenisPenggunaanKet': 'Jenis Penggunaan',
