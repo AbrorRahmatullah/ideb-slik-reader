@@ -457,9 +457,26 @@ def list_uploads():
 @app.route('/download_upload/<periodeData>/<username>/<namaFileUpload>/<uploadDate>')
 def download_upload_zip(periodeData, username, namaFileUpload, uploadDate):
     """Download semua file dalam satu upload session sebagai ZIP"""
+    downloadType = "File Upload TXT"
+    downloadDate = datetime.now()
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        try:
+            # FIX: Query hanya memiliki 5 parameter, bukan 7
+            query = """
+                INSERT INTO slik_download_logging (periodeData, namaFileUpload, downloadType, username, downloadDate)
+                VALUES (?, ?, ?, ?, ?)
+            """
+            
+            cursor.execute(query, (periodeData, namaFileUpload, downloadType, username, downloadDate))
+            conn.commit()
+
+        except Exception as e:
+            print(f"Error saving to DB: {e}")
+            traceback.print_exc()
         
         # Ambil info upload dari database (menggunakan uploadFolderPath)
         cursor.execute("""
@@ -3217,6 +3234,28 @@ def download_excel(periodeData, username, namaFileUpload, uploadDate):
         username = urllib.parse.unquote(username)
         namaFileUpload = urllib.parse.unquote(namaFileUpload)
         uploadDate = urllib.parse.unquote(uploadDate)
+        downloadType = "Output Excel"
+        downloadDate = datetime.now()
+        
+        try:
+        
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            query = """
+                INSERT INTO slik_download_logging (periodeData, namaFileUpload, downloadType, username, downloadDate)
+                VALUES (?, ?, ?, ?, ?)
+            """
+            
+            cursor.execute(query, (periodeData, namaFileUpload, downloadType, username, downloadDate))
+            conn.commit()
+
+        except Exception as e:
+            print(f"Error saving to DB: {e}")
+            traceback.print_exc()
+        finally:
+            cursor.close()
+            conn.close()
         
         # Log parameters for debugging
         print(f"Downloading Excel with parameters: {periodeData}, {username}, {namaFileUpload}, {uploadDate}")
