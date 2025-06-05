@@ -18,6 +18,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 from io import BytesIO
 from dateutil import parser
+from devtools import debug
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
@@ -1401,6 +1402,9 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Tambahkan kolom opsional jika tersedia
                     if 'tglAktaPendirian' in active_fKP.columns:
                         columns.insert(2, 'tglAktaPendirian')
+                    elif 'tanggalLahir' in active_fKP.columns:
+                        base_columns.insert(2, 'tanggalLahir')
+                        
                     if 'valutaKode' in active_fKP.columns:
                         columns.insert(12, 'valutaKode')
 
@@ -1434,7 +1438,11 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         'urutanFile': 'File ke'
                     }
                     if 'tglAktaPendirian' in active_fKP.columns:
-                        rename_dict['tglAktaPendirian'] = 'Tanggal Lahir/Pendirian'
+                        rename_dict['tglAktaPendirian'] = 'Tanggal Pendirian'
+                    elif 'tanggalLahir' in active_fKP.columns:
+                        rename_dict['tanggalLahir'] = 'Tanggal Lahir'
+
+                    
                     if 'valutaKode' in active_fKP.columns:
                         rename_dict['valutaKode'] = 'Valuta'
                     
@@ -1539,7 +1547,9 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
 
                 if 'tglAktaPendirian' in closed_fKP.columns:
                     columns_closed.insert(2, 'tglAktaPendirian')
-                    
+                elif 'tanggalLahir' in closed_fKP.columns:    
+                    columns_closed.insert(2, 'tanggalLahir')
+                     
                 if 'valutaKode' in closed_fKP.columns:
                     columns_closed.insert(12, 'valutaKode')  # Fixed here - was using 'columns' instead of 'columns_closed'
 
@@ -1564,8 +1574,10 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 }
 
                 if 'tglAktaPendirian' in closed_fKP.columns:
-                    rename_dict_closed['tglAktaPendirian'] = 'Tanggal Lahir/Pendirian'
-
+                    rename_dict_closed['tglAktaPendirian'] = 'Tanggal Pendirian'
+                elif 'tanggalLahir' in closed_fKP.columns:
+                    rename_dict_closed['tanggalLahir'] = 'Tanggal Lahir'
+                    
                 if 'valutaKode' in closed_fKP.columns:
                     rename_dict_closed['valutaKode'] = 'Valuta'  # Fixed here - was using 'rename_dict' instead of 'rename_dict_closed'
                     
@@ -1614,11 +1626,16 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 def process_data(df_filtered, table_name, summary_table=None):
                     # Kolom dasar yang dibutuhkan
                     base_columns = [
-                        'namaDebitur', 'npwp', 'tglAktaPendirian', 'alamat',
+                        'namaDebitur', 'npwp', 'alamat',
                         'ljkKet', 'jenisLcKet', 'tujuanLcKet', 'plafon', 'nominalLc',
                         'tanggalWanPrestasi', 'kualitas', 'kualitasKet',
                         'tahunBulan24', 'urutanFile'
                     ]
+                    
+                    if 'tanggalLahir' in df_filtered.columns:
+                        base_columns.insert(2, 'tanggalLahir')
+                    elif 'tglAktaPendirian' in df_filtered.columns:
+                        base_columns.insert(2, 'tglAktaPendirian')
                     
                     # Tambahkan kolom 'valuta' jika tersedia
                     if 'valuta' in df_filtered.columns:
@@ -1728,11 +1745,16 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 def process_guarantee_data(df_filtered, table_name, is_active=False):
                     # Kolom dasar yang dibutuhkan
                     base_columns = [
-                        'namaDebitur', 'npwp', 'tglAktaPendirian', 'alamat',
+                        'namaDebitur', 'npwp', 'alamat',
                         'ljkKet', 'jenisGaransiKet', 'tujuanGaransiKet', 'plafon',
                         'nominalBg', 'tanggalWanPrestasi', 'kualitas',
                         'kualitasKet', 'tahunBulan24', 'urutanFile'
                     ]
+                    
+                    if 'tanggalLahir' in df_filtered.columns:
+                        base_columns.insert(2, 'tanggalLahir')
+                    elif 'tglAktaPendirian' in df_filtered.columns:
+                        base_columns.insert(2, 'tglAktaPendirian')
                     
                     # Tambahkan kolom valuta jika tersedia (dengan penanganan nama kolom yang berbeda)
                     valuta_column = 'kodeValuta' if 'kodeValuta' in df_filtered.columns else 'valutaKode'
@@ -1856,17 +1878,26 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
     if len(list_uploaded_data_9) > 0:
         missing_ljk = [i for i, df in enumerate(list_uploaded_data_9) if 'ljk' not in df.columns]
+        print({
+            "missing_ljk":len(missing_ljk),
+            "list_uploaded_data_9":len(list_uploaded_data_9)
+            })
         if not missing_ljk:
             try:
                 # Fungsi umum untuk memproses dan menyimpan data fasilitas lainnya
                 def process_other_facility(df_filtered, table_name, is_active=False):
                     # Kolom dasar yang dibutuhkan
                     base_columns = [
-                        'namaDebitur', 'npwp', 'tglAktaPendirian', 'alamat',
+                        'namaDebitur', 'npwp', 'alamat',
                         'ljkKet', 'jenisFasilitasKet', 'nominalJumlahKwajibanIDR',
                         'jumlahHariTunggakan', 'kualitas',
                         'kualitasKet', 'tahunBulan24', 'urutanFile'
                     ]
+                    
+                    if 'tanggalLahir' in df_filtered.columns:
+                        base_columns.insert(2, 'tanggalLahir')
+                    elif 'tglAktaPendirian' in df_filtered.columns:
+                        base_columns.insert(2, 'tglAktaPendirian')
                     
                     # Tambahkan kolom valuta jika tersedia
                     if 'kodeValuta' in df_filtered.columns:
@@ -1978,8 +2009,11 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 combined_data_9 = pd.concat(list_uploaded_data_9, ignore_index=True)
                 merged_fLain = combined_data_9.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                 
+                print(merged_fLain)
+                
                 # Proses fasilitas aktif
                 active_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '00']
+                debug(active_fLain)
                 table_data_af_4 = process_other_facility(
                     active_fLain, 
                     'slik_fasilitas_aktif_lainnya',
@@ -2010,7 +2044,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 column_rename_map = {
                     'namaDebitur': 'Nama Debitur/Calon Debitur',
                     'npwp': 'Nomor Identitas',
-                    'tglAktaPendirian': 'Tanggal Lahir/Pendirian',
+                    'tglAktaPendirian': 'Tanggal Pendirian',
+                    'tanggalLahir': 'Tanggal Lahir',
                     'alamat': 'Alamat',
                     'ljkKet': 'Kreditur/Pelapor',
                     'jenisSuratBerharga': 'Jenis Surat Berharga',
@@ -2035,7 +2070,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
                 # 5. Definisi kolom dasar untuk kedua jenis data
                 base_columns = [
-                    'namaDebitur', 'npwp', 'tglAktaPendirian', 'alamat', 'ljkKet',
+                    'namaDebitur', 'npwp', 'alamat', 'ljkKet',
                     'jenisSuratBerharga', 'nilaiPasar', 'nilaiPerolehan',
                     'nominalSb', 'jumlahHariTunggakan', 'kualitas',
                     'kualitasKet', 'tahunBulan24', 'urutanFile'
@@ -2043,6 +2078,12 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
                 # Cek apakah kodeValuta harus ditambahkan ke kolom
                 columns_with_valuta = base_columns.copy()
+                
+                if 'tanggalLahir' in merged_fSB.columns:
+                    columns_with_valuta.insert(2, 'tanggalLahir')
+                elif 'tglAktaPendirian' in merged_fSB.columns:
+                    columns_with_valuta.insert(2, 'tglAktaPendirian')
+                
                 if 'kodeValuta' in merged_fSB.columns:
                     columns_with_valuta.insert(9, 'kodeValuta')  # Sisipkan setelah nominalSb
                 
@@ -2875,7 +2916,8 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
             'kolektibilitas': 'Kolektibilitas Saat ini',
             'tahunBulan24': 'Periode Pelaporan Terakhir',
             'urutanFile': 'File ke',
-            'tglAktaPendirian': 'Tanggal Lahir/Pendirian',
+            'tglAktaPendirian': 'Tanggal Pendirian',
+            'tanggalLahir': 'Tanggal Lahir',
             'kodeValuta': 'Valuta',
             'valuta': 'Valuta',
             'valutaKode': 'Valuta',
@@ -2955,6 +2997,15 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
                 drop_cols = ['periodeData', 'username', 'namaFileUpload', 'uploadDate', 'id']
                 df.drop(columns=[col for col in drop_cols if col in df.columns], errors='ignore', inplace=True)
 
+                # Validasi khusus untuk kolom tanggal - drop jika semua nilai kosong
+                date_cols_to_check = ['tglAktaPendirian', 'tanggalLahir']
+                for col in date_cols_to_check:
+                    if col in df.columns:
+                        # Cek apakah semua nilai dalam kolom kosong (None, NaN, atau string kosong)
+                        if df[col].isna().all() or (df[col].astype(str).str.strip() == '').all():
+                            print(f"Dropping column '{col}' - all values are empty")
+                            df.drop(columns=[col], inplace=True)
+                
                 # Tambahkan kolom No
                 df.insert(0, 'No', range(1, len(df) + 1))
 
