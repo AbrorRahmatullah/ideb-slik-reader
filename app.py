@@ -18,7 +18,6 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 from io import BytesIO
 from dateutil import parser
-from devtools import debug
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
@@ -2013,7 +2012,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
                 # Proses fasilitas aktif
                 active_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '00']
-                debug(active_fLain)
                 table_data_af_4 = process_other_facility(
                     active_fLain, 
                     'slik_fasilitas_aktif_lainnya',
