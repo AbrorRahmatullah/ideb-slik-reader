@@ -11,7 +11,7 @@ import urllib
 import shutil
 import zipfile
 
-from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
+from flask import Flask, make_response, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from werkzeug.datastructures import FileStorage
@@ -333,8 +333,8 @@ def escape_sql(val):
     return val.replace("'", "''") if isinstance(val, str) else val
 
 # Start background worker thread
-worker_thread = threading.Thread(target=process_files_worker, daemon=True)
-worker_thread.start()
+for _ in range(4):
+    threading.Thread(target=process_files_worker, daemon=True).start()
 
 # --- Download Functions ---
 def create_zip_from_folder(folder_path, zip_name=None):
@@ -1064,19 +1064,19 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
                 if 'individual' in data:
                     json_individual = data['individual']
-                    json_paramPencarian = data['individual']['parameterPencarian']
-                    json_dpdebitur = data['individual']['dataPokokDebitur']
-                    json_rFasilitas = data['individual']['ringkasanFasilitas']
-                    json_fKreditPembiayan = data['individual']['fasilitas']['kreditPembiayan']
-                    json_fLC = data['individual']['fasilitas']['lc']
-                    json_fGaransi = data['individual']['fasilitas']['garansiYgDiberikan']
-                    json_fFasilitasLain = data['individual']['fasilitas']['fasilitasLain']
-                    nomor_laporan = json_individual['nomorLaporan']
+                    json_paramPencarian = json_individual.get('parameterPencarian', {})
+                    json_dpdebitur = json_individual.get('dataPokokDebitur', [])
+                    json_rFasilitas = json_individual.get('ringkasanFasilitas', {})
+                    fasilitas = json_individual.get('fasilitas', {})
+                    json_fKreditPembiayan = fasilitas.get('kreditPembiayan', [])
+                    json_fLC = fasilitas.get('lc', [])
+                    json_fGaransi = fasilitas.get('garansiYgDiberikan', [])
+                    json_fFasilitasLain = fasilitas.get('fasilitasLain', [])
+                    nomor_laporan = json_individual.get('nomorLaporan')
 
-                    del json_individual['dataPokokDebitur']
-                    del json_individual['parameterPencarian']
-                    del json_individual['fasilitas']
-                    del json_individual['ringkasanFasilitas']
+                    # Hapus key yang ada saja
+                    for key in ['dataPokokDebitur', 'parameterPencarian', 'ringkasanFasilitas', 'fasilitas']:
+                        json_individual.pop(key, None)
 
                     uploaded_data_2 = pd.DataFrame(json_individual, index=[0]).fillna('')
                     uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0]).fillna('')
@@ -1187,22 +1187,22 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
 
                 elif 'perusahaan' in data:
                     json_perusahaan = data['perusahaan']
-                    json_paramPencarian =data['perusahaan']['parameterPencarian']
-                    json_dpdebitur = data['perusahaan']['dataPokokDebitur']
-                    json_kPengurusPemilik = data['perusahaan']['kelompokPengurusPemilik']
-                    json_rFasilitas = data['perusahaan']['ringkasanFasilitas']
-                    json_fKreditPembiayan = data['perusahaan']['fasilitas']['kreditPembiayan']
-                    json_fSuratBerharga = data['perusahaan']['fasilitas']['suratBerharga']
-                    json_fLC = data['perusahaan']['fasilitas']['lc']
-                    json_fGaransi = data['perusahaan']['fasilitas']['garansiYgDiberikan']
-                    json_fFasilitasLain = data['perusahaan']['fasilitas']['fasilitasLain']
-                    nomor_laporan = json_perusahaan['nomorLaporan']
+                    json_paramPencarian = json_perusahaan.get('parameterPencarian', {})
+                    json_dpdebitur = json_perusahaan.get('dataPokokDebitur', [])
+                    json_rFasilitas = json_perusahaan.get('ringkasanFasilitas', {})
+                    fasilitas = json_perusahaan.get('fasilitas', {})
                     
-                    del json_perusahaan['dataPokokDebitur']
-                    del json_perusahaan['parameterPencarian']
-                    del json_perusahaan['fasilitas']
-                    del json_perusahaan['ringkasanFasilitas']
-                    del json_perusahaan['kelompokPengurusPemilik']
+                    json_fKreditPembiayan = fasilitas.get('kreditPembiayan', [])
+                    json_fSuratBerharga = fasilitas.get('suratBerharga', [])
+                    json_fLC = fasilitas.get('lc', [])
+                    json_fGaransi = fasilitas.get('garansiYgDiberikan', [])
+                    json_fFasilitasLain = fasilitas.get('fasilitasLain', [])
+                    json_kPengurusPemilik = json_perusahaan.get('kelompokPengurusPemilik', None)
+                    nomor_laporan = json_perusahaan.get('nomorLaporan')
+
+                    # Hapus key yang ada saja
+                    for key in ['dataPokokDebitur', 'parameterPencarian', 'ringkasanFasilitas', 'fasilitas', 'kelompokPengurusPemilik']:
+                        json_perusahaan.pop(key, None)
                     
                     uploaded_data_2 = pd.DataFrame(json_perusahaan, index=[0]).fillna('')
                     uploaded_data_3 = pd.DataFrame(json_paramPencarian, index=[0]).fillna('')
@@ -1322,19 +1322,20 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             uploaded_data_10 = uploaded_data_10.assign(**{'urutanFile': idx})
                         list_uploaded_data_10.append(uploaded_data_10)      
                                           
-                    df_kPengurusPemilik = pd.DataFrame(json_kPengurusPemilik) 
-                    data_temp = {'kodeLJK': ['1', '2', '3'], 'namaLJK': ['A', 'B', 'C'], 'pengurusPemilik': ['X', 'Y', 'Z']}
-                    df_temp = pd.DataFrame(data_temp)
-                    df_expanded = df_temp.head(0)
+                    if json_kPengurusPemilik:
+                        df_kPengurusPemilik = pd.DataFrame(json_kPengurusPemilik) 
+                        data_temp = {'kodeLJK': ['1', '2', '3'], 'namaLJK': ['A', 'B', 'C'], 'pengurusPemilik': ['X', 'Y', 'Z']}
+                        df_temp = pd.DataFrame(data_temp)
+                        df_expanded = df_temp.head(0)
 
-                    for row in df_kPengurusPemilik.itertuples(index=False):
-                        for x in row.pengurusPemilik:
-                            df_expanded.loc[len(df_expanded)] = [row.kodeLJK, row.namaLJK, x]
-                
-                    df_expanded = df_expanded.join(pd.json_normalize(df_expanded.pop('pengurusPemilik')))
+                        for row in df_kPengurusPemilik.itertuples(index=False):
+                            for x in row.pengurusPemilik:
+                                df_expanded.loc[len(df_expanded)] = [row.kodeLJK, row.namaLJK, x]
+                    
+                        df_expanded = df_expanded.join(pd.json_normalize(df_expanded.pop('pengurusPemilik')))
 
-                    uploaded_data_11 = df_expanded
-                    table_data_11 = uploaded_data_11.to_html(classes="table table-striped", index=False)
+                        uploaded_data_11 = df_expanded
+                        table_data_11 = uploaded_data_11.to_html(classes="table table-striped", index=False)
                 if has_request_context():
                     session['data_available'] = True
                 
@@ -2229,169 +2230,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
         "table_data_cf_5": table_data_cf_5,
     }
 
-@app.route('/upload', methods=['GET', 'POST'])
-def upload_file():
-    if 'username' not in session:
-        flash("Please log in first.")
-        return redirect(url_for('login'))
-    
-    role_access = session.get('role_access')
-    fullname = session.get('fullname')
-    username = session.get('username')
-    
-    flag = ''
-            
-    if request.method == 'GET':
-        session['data_available'] = False
-        
-        # Ambil daftar nama file yang sudah ada dari database/storage
-        existing_files = get_existing_filenames()  # Implementasikan fungsi ini
-        
-        return render_template(
-            'upload.html',
-            flags=FLAGS,
-            role_access=role_access,
-            fullname=fullname,
-            existing_files=existing_files  # Kirim data ke template
-        )
-    elif request.method == 'POST':
-        flag = request.form.get('flag')
-        nama_file = request.form.get('nama_file')
-        uploaded_files = request.files.getlist('file')
-        total_file_size = 0
-        
-        if not uploaded_files or not any(f.filename for f in uploaded_files):
-            flash("No files selected for upload.")
-            return redirect(url_for('upload_file'))
-        
-        # Validasi input
-        if not flag or not nama_file or not uploaded_files:
-            flash('Semua field harus diisi', 'error')
-            return redirect(url_for('upload_file'))
-        
-        # Cek duplikasi nama file
-        if check_filename_exists(nama_file):
-            # flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
-            # return redirect(url_for('upload_file'))
-            return '''
-                <script>
-                    alert("Nama File sudah ada, harap masukkan nama file yang lain!");
-                    window.location.href = "/upload";
-                </script>
-            '''
-        
-        for file in uploaded_files:
-            file_size = len(file.read())
-            file.seek(0)
-            total_file_size += file_size
-                      
-        if total_file_size > MAX_FILE_SIZE:
-            return '''
-                <script>
-                    alert("Total file yang diupload terlalu besar. Maksimum 200MB!");
-                    window.location.href = "/upload"; // Redirect setelah alert
-                </script>
-            '''
-        
-        # Generate a unique task ID
-        task_id = str(uuid.uuid4())
-        
-        # Initialize the task in the progress tracker
-        task_progress[task_id] = {'progress': 0}
-        
-        # Save files as bytes
-        temp_files = []
-        for file in uploaded_files:
-            if file and file.filename:
-                # Read the file content and save it along with the filename
-                file_content = file.read()
-                temp_files.append({
-                    'filename': file.filename,
-                    'content': file_content
-                })
-        
-        # Add task to queue
-        user_info = {
-            "username": username,
-            "role_access": role_access,
-            "fullname": fullname,
-            "flag": flag,
-            "nama_file": nama_file,
-        }
-        task_queue.put((task_id, temp_files, user_info))
-        
-        # Store task ID in session
-        session['task_id'] = task_id
-        session['data_available'] = True
-        
-        # Redirect to task status page
-        return redirect(url_for('task_status', task_id=task_id))
-
-@app.route('/task-status/<task_id>')
-def task_status(task_id):
-    """Check status of a background task"""
-    # Initialize task_progress if task_id doesn't exist (handles race condition)
-    if task_id not in task_progress:
-        task_progress[task_id] = {'progress': 0}
-    
-    # Check if task has completed results
-    if task_id in task_results:
-        result = task_results[task_id]
-        
-        if result["status"] == "error":
-            flash(f"Error: {result['error']}")
-            return redirect(url_for('upload_file'))
-        
-        # Render the results using the processed data
-        processed_data = result["result"]
-        role_access = session.get('role_access')
-        fullname = session.get('fullname')
-        
-        # PERBAIKAN: Simpan processed_data ke session dan uploaded_data
-        session['processed_data'] = processed_data
-        global uploaded_data
-        uploaded_data = processed_data
-        session['data_available'] = True
-        
-        # flash("File berhasil diupload!")
-    
-        return render_template(
-            'upload.html',
-            table_data=processed_data.get("table_data"),
-            list_table_data=processed_data.get("list_table_data"),
-            table_data_2=processed_data.get("table_data_2"),
-            table_data_3=processed_data.get("table_data_3"),
-            table_data_4=processed_data.get("table_data_4"),
-            table_data_5=processed_data.get("table_data_5"),
-            table_data_6=processed_data.get("table_data_6"),
-            table_data_7=processed_data.get("table_data_7"),
-            table_data_8=processed_data.get("table_data_8"),
-            table_data_9=processed_data.get("table_data_9"),
-            table_data_10=processed_data.get("table_data_10"),
-            table_data_11=processed_data.get("table_data_11"), 
-            flags=FLAGS,
-            table_data_af_1=processed_data.get("table_data_af_1"), 
-            table_data_af_2=processed_data.get("table_data_af_2"), 
-            table_data_af_3=processed_data.get("table_data_af_3"), 
-            table_data_af_4=processed_data.get("table_data_af_4"), 
-            table_data_af_5=processed_data.get("table_data_af_5"), 
-            table_data_cf_1=processed_data.get("table_data_cf_1"), 
-            table_data_cf_2=processed_data.get("table_data_cf_2"), 
-            table_data_cf_3=processed_data.get("table_data_cf_3"), 
-            table_data_cf_4=processed_data.get("table_data_cf_4"), 
-            table_data_cf_5=processed_data.get("table_data_cf_5"),
-            role_access=role_access,
-            fullname=fullname
-        )
-        
-    # Task is still processing
-    return render_template(
-        'processing.html',
-        task_id=task_id,
-        role_access=session.get('role_access'),
-        fullname=session.get('fullname')
-    )
-
 @app.route('/task-status-big-size-file/<task_id>')
 def task_status_big_size_file(task_id):
     """Menampilkan status task upload besar"""
@@ -2423,24 +2261,6 @@ def task_status_big_size_file(task_id):
         </script>
     '''
     
-@app.route('/api/task-status/<task_id>', methods=['GET'])
-def api_task_status(task_id):
-    """API endpoint to check task status"""
-    # Initialize task_progress if task_id doesn't exist
-    if task_id not in task_progress:
-        task_progress[task_id] = {'progress': 0}
-    
-    # Check if task is completed
-    if task_id in task_results:
-        result = task_results[task_id]
-        if result["status"] == "error":
-            return jsonify({"status": "error", "message": result["error"]})
-        return jsonify({"status": "completed", "redirect": url_for('task_status', task_id=task_id)})
-    
-    # Task is still processing
-    progress = task_progress.get(task_id, {}).get('progress', 0)
-    return jsonify({"status": "processing", "progress": progress})
-
 @app.route('/api/task-status-big-size-file/<task_id>')
 def task_status_big_size_file_api(task_id):
     """API endpoint to check task status"""
@@ -2469,259 +2289,6 @@ def task_status_big_size_file_api(task_id):
     
     # Default to completed if not found (assume old completed task)
     return jsonify({'status': 'completed'})
-
-@app.route('/download')
-def download_file():
-    # Cek data availability dengan prioritas
-    processed_data = None
-
-    # Prioritas 1: uploaded_data
-    if uploaded_data is not None:
-        processed_data = uploaded_data
-    elif session.get('processed_data'):
-        processed_data = session.get('processed_data')
-    elif not session.get('data_available'):
-        return '''
-                <script>
-                    alert("No File data to Download!");
-                    window.location.href = "/upload";
-                </script>
-            '''
-
-    if processed_data is None:
-        return '''
-                <script>
-                    alert("No processed data available!");
-                    window.location.href = "/upload";
-                </script>
-            '''
-
-    # Prepare directory and filename
-    current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    directory = os.path.join('..', 'smi-slikreader/file_download')
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    output_file = os.path.join(directory, f'file_{current_datetime}.xlsx')
-
-    # Debug processed_data
-    print("=== DEBUG PROCESSED_DATA ===")
-    if processed_data:
-        for key, value in processed_data.items():
-            if key.startswith('table_data'):
-                data_type = type(value).__name__
-                data_len = len(str(value)) if value else 0
-                is_html = isinstance(value, str) and '<table' in value
-                print(f"{key}: type={data_type}, len={data_len}, is_html={is_html}")
-
-    facilities = {}
-
-    facility_keys = {
-        'fAktifKreditPembiayaan': 'table_data_af_1',
-        'fAktifLC': 'table_data_af_2', 
-        'fAktifBankGaransi': 'table_data_af_3',
-        'fAktifLainnya': 'table_data_af_4',
-        'fAktifSuratBerharga': 'table_data_af_5',
-        'fLunasKreditPembiayaan': 'table_data_cf_1',
-        'fLunasLC': 'table_data_cf_2',
-        'fLunasBankGaransi': 'table_data_cf_3', 
-        'fLunasLainnya': 'table_data_cf_4',
-        'fLunasSuratBerharga': 'table_data_cf_5'
-    }
-
-    def convert_to_dataframe(data, sheet_name):
-        try:
-            if not data:
-                return pd.DataFrame()
-
-            if isinstance(data, str):
-                if '<table' in data:
-                    from io import StringIO
-                    try:
-                        df_list = pd.read_html(StringIO(data), header=0)
-                        if df_list:
-                            df = df_list[0]
-                            df.columns = [str(col).strip() for col in df.columns]
-                            return df
-                    except:
-                        return parse_html_table_manually(data)
-                else:
-                    import json
-                    try:
-                        return pd.DataFrame(json.loads(data))
-                    except:
-                        return pd.DataFrame()
-            elif isinstance(data, pd.DataFrame):
-                return data.copy()
-            elif isinstance(data, list):
-                if len(data) > 0 and isinstance(data[0], dict):
-                    return pd.DataFrame(data)
-                elif len(data) > 1:
-                    return pd.DataFrame(data[1:], columns=data[0])
-                else:
-                    return pd.DataFrame(data)
-            elif isinstance(data, dict):
-                return pd.DataFrame([data])
-        except Exception as e:
-            print(f"Error converting {sheet_name}: {e}")
-        return pd.DataFrame()
-
-    def parse_html_table_manually(html_string):
-        try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html_string, 'html.parser')
-            table = soup.find('table')
-            if not table:
-                return pd.DataFrame()
-
-            headers = []
-            header_row = table.find('tr')
-            if header_row:
-                headers = [th.get_text().strip() for th in header_row.find_all(['th', 'td'])]
-
-            rows = []
-            for tr in table.find_all('tr')[1:]:
-                row = [td.get_text().strip() for td in tr.find_all(['td', 'th'])]
-                if row:
-                    rows.append(row)
-
-            if headers and rows:
-                max_cols = len(headers)
-                normalized_rows = []
-                for row in rows:
-                    if len(row) < max_cols:
-                        row.extend([''] * (max_cols - len(row)))
-                    elif len(row) > max_cols:
-                        row = row[:max_cols]
-                    normalized_rows.append(row)
-
-                return pd.DataFrame(normalized_rows, columns=headers)
-
-        except Exception as e:
-            print(f"Error in manual parsing: {e}")
-        return pd.DataFrame()
-
-    # Convert semua data fasilitas
-    for sheet_name, data_key in facility_keys.items():
-        table_data = processed_data.get(data_key)
-        df = convert_to_dataframe(table_data, sheet_name)
-        facilities[sheet_name] = df
-
-        if not df.empty:
-            print(f"SUCCESS - {sheet_name}: {len(df)} rows")
-        else:
-            print(f"EMPTY - {sheet_name}")
-
-    # Gabungkan fasilitas aktif
-    all_active_facilities = []
-    active_facility_mapping = {
-        'fAktifKreditPembiayaan': {
-            'sheet_key': 'table_data_af_1',
-            'jenis_column': ['jenisKreditPembiayaanKet', 'Jenis Kredit/Pembiayaan']
-        },
-        'fAktifLC': {
-            'sheet_key': 'table_data_af_2',
-            'jenis_column': ['jenisLcKet', 'Jenis L/C']
-        },
-        'fAktifBankGaransi': {
-            'sheet_key': 'table_data_af_3',
-            'jenis_column': ['jenisGaransiKet', 'Jenis Garansi']
-        },
-        'fAktifLainnya': {
-            'sheet_key': 'table_data_af_4',
-            'jenis_column': ['jenisFasilitasKet', 'Jenis Fasilitas']
-        },
-        'fAktifSuratBerharga': {
-            'sheet_key': 'table_data_af_5',
-            'jenis_column': ['jenisSuratBerharga', 'Jenis Surat Berharga']
-        }
-    }
-
-    # Define the columns we want to keep
-    required_columns = [
-        'Nama Debitur/Calon Debitur',
-        'Nomor Laporan',
-        'Nomor Identitas',
-        'Kreditur/Pelapor',
-        'Kode Kolektibilitas Saat ini',
-        'Kolektibilitas Saat ini'
-    ]
-
-    for facility_name, facility_info in active_facility_mapping.items():
-        df = facilities.get(facility_name)
-        if df is not None and not df.empty:
-            df_copy = df.copy()
-            
-            # Find the correct jenis column
-            jenis_value = None
-            for col in facility_info['jenis_column']:
-                if col in df_copy.columns:
-                    jenis_value = df_copy[col].iloc[0] if len(df_copy) > 0 else facility_name
-                    break
-            
-            # Keep only the required columns
-            available_columns = [col for col in required_columns if col in df_copy.columns]
-            df_copy = df_copy[available_columns]
-            
-            # Add the facility type column with the specific description
-            df_copy['Jenis Pembiayaan'] = jenis_value if jenis_value is not None else facility_name
-            all_active_facilities.append(df_copy)
-
-    combined_active_facilities = pd.DataFrame()
-    if all_active_facilities:
-        try:
-            combined_active_facilities = pd.concat(all_active_facilities, ignore_index=True, sort=False)
-            
-            # Add the 'No' column with sequential numbering
-            combined_active_facilities.insert(0, 'No', range(1, len(combined_active_facilities) + 1))
-            
-            # Reorder columns to put 'No' first and 'Jenis Pembiayaan' in the correct position
-            final_columns = ['No'] + required_columns[:]
-            final_columns.insert(5, 'Jenis Pembiayaan')  # Insert after Kreditur/Pelapor
-            
-            # Keep only the columns we want in the final output
-            available_final_columns = [col for col in final_columns if col in combined_active_facilities.columns]
-            combined_active_facilities = combined_active_facilities[available_final_columns]
-            
-            print(f"COMBINED - Active facilities: {len(combined_active_facilities)} rows")
-        except Exception as e:
-            print(f"Error combining active facilities: {e}")
-
-    facilities['SemuaFasilitasAktif'] = combined_active_facilities
-
-    try:
-        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-            # Write SemuaFasilitasAktif sheet first
-            df = facilities['SemuaFasilitasAktif']
-            if df is not None and not df.empty:
-                df.to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
-                print(f"EXCEL - Wrote SemuaFasilitasAktif: {len(df)} rows")
-            else:
-                pd.DataFrame().to_excel(writer, sheet_name='SemuaFasilitasAktif', index=False)
-
-            # Write other sheets
-            for sheet_name, df in facilities.items():
-                if sheet_name != 'SemuaFasilitasAktif':
-                    try:
-                        clean_sheet_name = sheet_name.replace('/', '_').replace('\\', '_')[:31]
-                        if df is not None and not df.empty:
-                            df.to_excel(writer, sheet_name=clean_sheet_name, index=False)
-                        else:
-                            pd.DataFrame().to_excel(writer, sheet_name=clean_sheet_name, index=False)
-                    except Exception as e:
-                        print(f"Error writing sheet {sheet_name}: {e}")
-
-        print(f"EXCEL - File created successfully: {output_file}")
-
-    except Exception as e:
-        print(f"Error creating Excel file: {e}")
-        return f'''
-                <script>
-                    alert("Error creating Excel file: {str(e)}");
-                    window.location.href = "/upload";
-                </script>
-            '''
-
-    return send_file(output_file, as_attachment=True)
 
 # Daftar tabel yang akan diekspor
 tables = [
@@ -3249,14 +2816,18 @@ def upload_big_size_file():
             }
 
             # Masukkan ke queue untuk diproses
-            task_queue.put((task_id, temp_files, user_info))
+            try:
+                task_queue.put_nowait((task_id, temp_files, user_info))
+            except queue.Full:
+                return jsonify({
+                    "status": "error",
+                    "message": "Antrean upload file penuh. Silakan coba lagi nanti."
+                }), 503
             
             # Simpan task_id di session dan set flag upload_done
             session['task_id'] = task_id
             session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
 
-            # flash("Files are being processed in the background.", "success")
-            # return redirect(url_for('upload_big_size_file'))
             return '''
                 <script>
                     alert("Files are being processed in the background.");
@@ -3274,7 +2845,6 @@ def upload_big_size_file():
                     </script>
                 '''
             
-
 @app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
 def download_excel(periodeData, username, namaFileUpload, uploadDate):
     try:
@@ -3325,4 +2895,4 @@ def download_excel(periodeData, username, namaFileUpload, uploadDate):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, threads=16, debug=True)
