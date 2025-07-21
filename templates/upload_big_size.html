@@ -20,11 +20,16 @@
                 </select>
             </div>
             <div class="mb-3">
-                <div class="d-flex align-items-center">
-                    <label for="file" class="form-label me-2">Select JSON File(s)</label>
-                    <small class="text-danger">*Maksimal size file upload 200MB</small> 
+                <div class="d-flex flex-column">
+                    <div class="d-flex align-items-center mb-1">
+                        <label for="file" class="form-label me-2">Select JSON File(s)</label>
+                        <small class="text-danger">*Maksimal size file upload 200MB</small> 
+                    </div>
+                    <small class="text-danger">
+                        <i class="fas fa-exclamation-triangle"></i> Pastikan file yang diupload memiliki <strong>NPWP</strong> atau <strong>Nomor Identitas</strong> yang sama. Jika tidak sama, sistem <u>tidak akan menyimpan</u> file tersebut.
+                    </small>
                 </div>
-                <input type="file" name="file" class="form-control" accept=".txt" multiple required>
+                <input type="file" name="file" class="form-control mt-2" accept=".txt" multiple required>
             </div>
             <div class="mb-3">
                 <label for="nama_file" class="form-label">Nama File</label>
@@ -190,7 +195,41 @@
     </div>
 </div>
 
+<!-- Modal untuk Error Validasi (misal NPWP tidak konsisten) -->
+<div class="modal fade" id="validationErrorModal" tabindex="-1" aria-labelledby="validationErrorModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content border border-danger">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="validationErrorModalLabel">Error Validasi</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <p id="validationErrorMessage">Pesan error validasi.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-danger" onclick="window.location.reload()">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- {% if show_processing_alert %}
 <script>
+    alert("Files are being processed in the background.");
+    window.location.href = "/upload-big-size";
+</script>
+{% endif %} -->
+
+{% if task_id %}
+    <script>
+        const taskId = "{{ task_id }}";
+    </script>
+{% endif %}
+
+<script>
+    const errorList = {}; // taskId -> message
+    const validationErrorList = {}; // taskId -> message spesifik validasi
+
     // Get existing file names from the table for client-side check
     const existingFileNames = [
         {% for item in data %}
@@ -303,7 +342,8 @@
 
     document.addEventListener("DOMContentLoaded", function () {
         // Get all task IDs (avoid null values)
-        const taskIds = {{ data | map(attribute='task_id') | list | tojson }}.filter(id => id !== null);
+        const taskIds = {{ data | map(attribute='task_id') | list | tojson }}
+            .filter(id => id && id !== null && id !== "null" && id.trim() !== "");
         const completedTasks = new Set();
         const totalTasks = new Set(taskIds).size;
         let activeTaskCount = 0;
@@ -322,27 +362,81 @@
         console.log(`Initial status: ${completedTasks.size} completed tasks, ${activeTaskCount} active tasks`);
 
         // Function to show alert and handle reload based on completion status
-        function handleTaskCompletion(taskId) {
-            // Add to completed tasks if not already there
+        function handleTaskCompletion(taskId, isError = false) {
             if (!completedTasks.has(taskId)) {
                 completedTasks.add(taskId);
                 activeTaskCount--;
-                
-                console.log(`Task ${taskId} completed. Active tasks remaining: ${activeTaskCount}`);
-                
-                // Check if all tasks are completed
+
+                if (isError) {
+                    console.log(`Task ${taskId} failed with error. Active tasks remaining: ${activeTaskCount}`);
+                } else {
+                    console.log(`Task ${taskId} completed successfully. Active tasks remaining: ${activeTaskCount}`);
+                }
+
                 if (activeTaskCount <= 0) {
-                    // All tasks completed - show alert and reload on confirmation
-                    console.log("All tasks completed, showing reload alert");
-                    if (confirm("Semua file berhasil diupload! Klik OK untuk merefresh halaman.")) {
-                        window.location.reload();
+                    const totalTasksCount = taskIds.length;
+                    const totalErrors = document.querySelectorAll('[id^="progress-bar-"].bg-danger').length;
+
+                    if (totalErrors === totalTasksCount) {
+                        // ✅ Semua error
+                        console.log("All tasks failed. Showing full failure alert.");
+                        if (confirm("Semua proses upload dibatalkan. Periksa seluruh file!. Klik OK untuk merefresh halaman.")) {
+                            window.location.reload();
+                        }
+                    } else if (totalErrors > 0) {
+                        // ⚠️ Sebagian error
+                        console.log("All tasks completed (some with errors), showing reload alert");
+                        if (confirm("Semua proses upload selesai, namun beberapa mengalami error. Klik OK untuk merefresh halaman.")) {
+                            window.location.reload();
+                        }
+                    } else {
+                        // ✅ Semua sukses
+                        console.log("All tasks completed successfully, showing reload alert");
+                        if (confirm("Semua file berhasil diupload! Klik OK untuk merefresh halaman.")) {
+                            window.location.reload();
+                        }
                     }
                 } else {
-                    // Some tasks completed but others still processing - show non-reloading alert
-                    console.log("Some tasks still processing, showing non-reload alert");
-                    alert("File berhasil diupload! Masih ada proses upload lain yang sedang berjalan.");
+                    if (isError) {
+                        alert("Terjadi kesalahan saat memproses file! Masih ada proses upload lain yang sedang berjalan.");
+                    } else {
+                        alert("File berhasil diupload! Masih ada proses upload lain yang sedang berjalan.");
+                        setTimeout(() => {
+                            if (Object.keys(validationErrorList).length > 0) {
+                                const firstMsg = validationErrorList[Object.keys(validationErrorList)[0]];
+                                showValidationErrorModal(firstMsg);
+                            }
+                        }, 200);
+                    }
                 }
             }
+        }
+
+        // Function to handle error in progress bar
+        function handleTaskError(taskId, errorMessage = "Error") {
+            const progressBar = document.getElementById(`progress-bar-${taskId}`);
+            const downloadBtn = document.getElementById(`download-btn-${taskId}`);
+            
+            if (progressBar) {
+                progressBar.classList.remove("progress-bar-animated");
+                progressBar.classList.add("bg-danger");
+                progressBar.style.width = "100%";
+                progressBar.innerText = errorMessage;
+                progressBar.setAttribute("aria-valuenow", "100");
+            }
+            
+            if (downloadBtn) {
+                downloadBtn.disabled = true;
+                downloadBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Error';
+                downloadBtn.classList.remove("btn-primary");
+                downloadBtn.classList.add("btn-danger");
+            }
+        } 
+        
+        
+        function showValidationErrorModal(msg) {
+            $("#validationErrorMessage").text(msg);
+            $("#validationErrorModal").modal("show");
         }
 
         // Poll for task status updates
@@ -370,11 +464,18 @@
                         if (!response.ok) {
                             throw new Error(`HTTP error! Status: ${response.status}`);
                         }
+
+                        const contentType = response.headers.get("content-type");
+                        if (!contentType || !contentType.includes("application/json")) {
+                            throw new Error("Invalid content-type, expected JSON.");
+                        }
+
                         return response.json();
                     })
                     .then(data => {
+                        console.log(`Polling task ${taskId}:`, data);
                         if (data.status === "completed") {
-                            // Update UI
+                            // Update UI for successful completion
                             progressBar.style.width = "100%";
                             progressBar.classList.remove("progress-bar-animated");
                             progressBar.innerText = "100%";
@@ -422,50 +523,49 @@
                             // Show alert only once per task
                             if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
                                 sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
-                                handleTaskCompletion(taskId);
+                                handleTaskCompletion(taskId, false);
                             }
                         } else if (data.status === "error") {
+                            const errorMessage = data.message || "Terjadi kesalahan";
+                            const errorType = data.error_type || "general_error";
+
+                            console.log(`Task ${taskId} failed with error:`, errorMessage);
+                            errorList[taskId] = errorMessage;
+
+                            if (errorType === "validation_error") {
+                                validationErrorList[taskId] = errorMessage;
+                                showValidationErrorModal(errorMessage);
+                            }
+
+                            handleTaskError(taskId, errorMessage); // <- ini perlu ditambahkan!
+
                             completedTasks.add(taskId);
                             activeTaskCount--;
-                            
-                            progressBar.classList.add("bg-danger");
-                            progressBar.innerText = "Error";
-                            
-                            console.log(`Task ${taskId} failed with error. Active tasks remaining: ${activeTaskCount}`);
-                            
-                            // Check if this was the last active task
-                            if (activeTaskCount <= 0) {
-                                console.log("All tasks completed (some with errors), showing reload alert");
-                                if (confirm("Semua proses upload selesai, namun beberapa mengalami error. Klik OK untuk merefresh halaman.")) {
-                                    window.location.reload();
-                                }
+
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId, true);  // Pastikan alert jalan
                             }
+
+                            return;
                         } else {
                             // Continue polling only if task is still in progress
                             setTimeout(pollStatus, 5000);
                         }
                     })
                     .catch(error => {
-                        console.error("Error polling task status:", error);
+                        console.error("Error polling task status:", error.message || error);
                         // If we get too many errors (e.g., endpoint not responding),
                         // consider the task as failed
                         pollStatus.errorCount = (pollStatus.errorCount || 0) + 1;
                         if (pollStatus.errorCount > 3) {
                             console.warn(`Too many polling errors for task ${taskId}, marking as error`);
-                            completedTasks.add(taskId);
-                            activeTaskCount--;
+                            handleTaskError(taskId, "Network Error");
                             
-                            if (progressBar) {
-                                progressBar.classList.add("bg-danger");
-                                progressBar.innerText = "Error";
-                            }
-                            
-                            // Check if this was the last active task
-                            if (activeTaskCount <= 0) {
-                                console.log("All tasks completed (some with errors), showing reload alert");
-                                if (confirm("Semua proses upload selesai, namun beberapa mengalami error. Klik OK untuk merefresh halaman.")) {
-                                    window.location.reload();
-                                }
+                            // Show completion with error
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId, true);
                             }
                         } else {
                             // Retry with backoff
@@ -475,7 +575,9 @@
             }
         
             // Start polling if task is not completed
-            pollStatus();
+            if (typeof taskId !== 'undefined' && taskId !== null && taskId !== "") {
+                pollStatus();
+            }
         });
 
         // Poll for progress updates
@@ -499,6 +601,18 @@
                     })
                     .then(data => {
                         const progress = data.progress;
+                        const status = data.status;
+                        
+                        // Check if status is Error
+                        if (status === "Error") {
+                            handleTaskError(taskId, data.error || "Error");
+
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId, true);
+                            }
+                            return;
+                        }
                         
                         // Update progress bar
                         progressBar.style.width = progress + "%";
@@ -552,7 +666,7 @@
                             // Show alert only once per task
                             if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
                                 sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
-                                handleTaskCompletion(taskId);
+                                handleTaskCompletion(taskId, false);
                             }
                         }
                     })
@@ -562,12 +676,12 @@
                         pollProgress.errorCount = (pollProgress.errorCount || 0) + 1;
                         if (pollProgress.errorCount > 3) {
                             console.warn(`Too many progress polling errors for task ${taskId}, marking as error`);
-                            completedTasks.add(taskId);
-                            activeTaskCount--;
+                            handleTaskError(taskId, "Network Error");
                             
-                            if (progressBar) {
-                                progressBar.classList.add("bg-danger");
-                                progressBar.innerText = "Error";
+                            // Show completion with error
+                            if (!sessionStorage.getItem(`alert_shown_${taskId}`)) {
+                                sessionStorage.setItem(`alert_shown_${taskId}`, 'true');
+                                handleTaskCompletion(taskId, true);
                             }
                         }
                     });
@@ -584,6 +698,8 @@
             pollProgress();
         }
     });
+
+    
 </script>
 {% endblock %}
 

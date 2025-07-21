@@ -176,165 +176,151 @@ def process_files_worker():
             task_id, files, user_info = task_queue.get(timeout=1)
         except queue.Empty:
             continue
-        
+
         try:
             bulan_dict = {
                 1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
                 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
                 9: "September", 10: "Oktober", 11: "November", 12: "Desember"
             }
-            
-            # Buat folder untuk upload session ini
+
             nama_file_upload = user_info.get("nama_file")
             upload_folder_path = create_upload_folder(nama_file_upload)
-            
-            # Konversi files (yang berisi raw content) menjadi FileStorage objects
+
             periode_data = None
             uploaded_files = []
-            
-            # Simpan setiap file ke folder lokal
-            for idx, file_data in enumerate(files):
+
+            session_npwp = None
+            session_identitas = None
+
+            for file_data in files:
                 filename = secure_filename(file_data['filename'])
-                
-                # Validasi ekstensi dan MIME type (text/plain)
-                mimetype = file_data.get('mimetype', 'text/plain')  # default to 'text/plain' if not provided
-                
+                mimetype = file_data.get('mimetype', 'text/plain')
                 if not is_allowed_file(filename, mimetype):
-                    raise ValueError(f"Invalid file type for {filename}. Only .txt files are allowed.")
-                
-                # Simpan file ke local storage
-                file_path = save_file_to_local(
-                    file_data['content'], 
-                    file_data['filename'], 
-                    upload_folder_path
-                )
-                
-                # Create BytesIO object with the content untuk processing
-                file_stream = BytesIO(file_data['content'])
-                file_obj = FileStorage(
-                    stream=file_stream,
+                    raise ValueError(f"File {filename} bukan .txt atau tipe MIME salah.")
+
+                save_file_to_local(file_data['content'], filename, upload_folder_path)
+
+                uploaded_files.append(FileStorage(
+                    stream=BytesIO(file_data['content']),
                     filename=filename,
                     name='file',
                     content_type=mimetype
-                )
-                uploaded_files.append(file_obj)
-                
-            # Set a flag to track if we've already processed a file successfully
-            first_successful_file = True
+                ))
 
-            # Process files to extract period data from first valid file
-            for idx, uploaded_file in enumerate(uploaded_files):  # Fixed: enumerate returns (index, item)
-                try:
-                    file_content = uploaded_file.stream.read()
-                    
-                    # Flag to track if current file was processed successfully
-                    file_processed = False
-                    
-                    # Try different encodings in order of likelihood
-                    for encoding in ['utf-8', 'latin-1', 'utf-16', 'ascii']:
-                        try:
-                            # Decode and clean in one step
-                            content = re.sub(r'[^\x20-\x7E\t\r\n]', '', 
-                                        file_content.decode(encoding, errors='strict'))
-                            
-                            # Parse JSON directly
-                            data = json.loads(content)
-                            
-                            if 'perusahaan' in data and 'posisiDataTerakhir' in data['perusahaan']:
-                                posisiDataTerakhir = data['perusahaan']['posisiDataTerakhir']
-                                date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
-                                json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
-                                
-                                # Only set periode_data if it's still None or if this is the first successful file
-                                if periode_data is None or first_successful_file:
-                                    periode_data = json_posisiDataTerakhir
-                                    first_successful_file = False
-                                
-                                # Mark as processed successfully
-                                file_processed = True
-                                break  # Exit encoding loop since we found a working encoding
-                            
-                            elif 'individual' in data and 'posisiDataTerakhir' in data['individual']:
-                                posisiDataTerakhir = data['individual']['posisiDataTerakhir']
-                                date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
-                                json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
-                                
-                                # Only set periode_data if it's still None or if this is the first successful file
-                                if periode_data is None or first_successful_file:
-                                    periode_data = json_posisiDataTerakhir
-                                    first_successful_file = False
-                                
-                                # Mark as processed successfully
-                                file_processed = True
-                                break  # Exit encoding loop since we found a working encoding
-                                
-                        except UnicodeDecodeError:
-                            # Try next encoding
+            for idx, uploaded_file in enumerate(uploaded_files):
+                file_content = uploaded_file.stream.read()
+                file_processed = False
+
+                for encoding in ['utf-8', 'latin-1', 'utf-16', 'ascii']:
+                    try:
+                        content = re.sub(r'[^\x20-\x7E\t\r\n]', '', file_content.decode(encoding))
+                        data = json.loads(content)
+
+                        if 'perusahaan' in data:
+                            obj = data['perusahaan']
+                            ident_key = 'npwp'
+                        elif 'individual' in data:
+                            obj = data['individual']
+                            ident_key = 'identitas'
+                        else:
                             continue
-                        except json.JSONDecodeError as e:
-                            print(f"JSON error in file {uploaded_file.filename}: {str(e)}")
-                            break
-                        except KeyError as e:
-                            print(f"Missing key in JSON structure: {str(e)}")
-                            break
-                        except Exception as e:
-                            print(f"Unexpected error: {str(e)}")
-                            break
-                            
-                    # Reset the file stream position for potential future reads
-                    uploaded_file.stream.seek(0)
-                    
-                    if not file_processed:
-                        print(f"Warning: Could not process file {uploaded_file.filename}")
-                        
-                except Exception as e:
-                    print(f"Error processing file: {str(e)}")
 
-            # Ensure periode_data is set to a default value if no files were processed successfully
-            if periode_data is None:
-                periode_data = "Unknown Period"  # Or any other default value
+                        posisi = obj.get('posisiDataTerakhir', '')
+                        ident = obj.get('parameterPencarian', {}).get(ident_key, '')
 
-            # Simpan metadata upload ke database
+                        if not posisi or not ident:
+                            raise ValueError(f"File {uploaded_file.filename} tidak memiliki data posisi atau identitas.")
+
+                        # Validasi identitas antar file
+                        if ident_key == 'npwp':
+                            if session_npwp is None:
+                                session_npwp = ident
+                            elif session_npwp != ident:
+                                raise ValueError(f"NPWP file ke-{idx+1} tidak konsisten.")
+                        else:
+                            if session_identitas is None:
+                                session_identitas = ident
+                            elif session_identitas != ident:
+                                raise ValueError(f"Identitas file ke-{idx+1} tidak konsisten.")
+
+                        date_obj = datetime.strptime(posisi, "%Y%m")
+                        periode_data = f"{bulan_dict[date_obj.month]} {date_obj.year}"
+
+                        file_processed = True
+                        break
+
+                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError):
+                        continue
+                    except Exception as e:
+                        app.logger.error(f"[{task_id}] Error parsing file {uploaded_file.filename}: {e}")
+                        break
+
+                uploaded_file.stream.seek(0)
+
+                if not file_processed:
+                    app.logger.warning(f"[{task_id}] Gagal memproses file: {uploaded_file.filename}")
+
+            if not periode_data:
+                periode_data = "Periode Tidak Dikenal"
+
             uploaded_at = datetime.now()
-            
             save_file_metadata_to_db_flask(
                 periodeData=periode_data,
                 namaFileUpload=nama_file_upload,
-                uploadFolderPath=upload_folder_path,  # Simpan path folder, bukan base64
+                uploadFolderPath=upload_folder_path,
                 username=user_info.get("username"),
                 fullname=user_info.get("fullname"),
                 roleAccess=user_info.get("role_access"),
                 uploadDate=uploaded_at
             )
-            
-            # Log start of processing
-            app.logger.info(f"Processing task {task_id} for nama file {user_info.get('nama_file')}")
-            app.logger.info(f"Files saved to: {upload_folder_path}")
-            
-            # Update progress to 10%
+
             task_progress[task_id]['progress'] = 10
-            
-            # Panggil fungsi process_uploaded_files dengan FileStorage objects
+
             result = process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at)
-            result['upload_folder_path'] = upload_folder_path  # Tambahkan info folder path
-            task_results[task_id] = {"status": "completed", "result": result}
+
+            if isinstance(result, dict) and result.get("error"):
+                task_results[task_id] = {
+                    "status": "error",
+                    "message": result.get("message", "Terjadi kesalahan."),
+                    "error_type": result.get("error_type", "validation_error"),  # pastikan baris ini ADA!
+                    "redirect_url": result.get("redirect_url", "/upload-big-size")
+                }
+
+                try:
+                    shutil.rmtree(upload_folder_path)
+                except Exception as cleanup_error:
+                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+
+                app.logger.error(f"[{task_id}] Gagal: {result.get('message')}")
+            else:
+                result['upload_folder_path'] = upload_folder_path
+                task_results[task_id] = {"status": "completed", "result": result}
+                app.logger.info(f"[{task_id}] Selesai diproses.")
+
         except Exception as e:
-            task_results[task_id] = {"status": "error", "error": str(e)}
-            # Jika ada error, hapus folder yang sudah dibuat
+            task_results[task_id] = {
+                "status": "error",
+                "error": str(e),
+                "error_type": "system_error"
+            }
+            app.logger.error(f"[{task_id}] Error tak terduga: {e}")
+
             if 'upload_folder_path' in locals():
                 try:
                     shutil.rmtree(upload_folder_path)
                 except:
                     pass
-        task_queue.task_done()
+        finally:
+            task_queue.task_done()
+
+# Jalankan 4 worker thread
+for _ in range(4):
+    threading.Thread(target=process_files_worker, daemon=True).start()
 
 def escape_sql(val):
     """Mencegah SQL Injection dengan mengganti ' menjadi ''."""
     return val.replace("'", "''") if isinstance(val, str) else val
-
-# Start background worker thread
-for _ in range(4):
-    threading.Thread(target=process_files_worker, daemon=True).start()
 
 # --- Download Functions ---
 def create_zip_from_folder(folder_path, zip_name=None):
@@ -705,6 +691,28 @@ def insert_data(cursor, table_name, data_item, columns_to_remove=None, extra_col
         traceback.print_exc()
         print(f"Item: {data_item}")
 
+def cleanup_upload(task_id):
+    """
+    Membersihkan folder upload dan status task yang terkait dengan task_id.
+    """
+    try:
+        # Cari folder upload berdasarkan task_id (jika kamu buat folder berdasarkan task_id)
+        # Misalnya uploads/task_id_20250718_160731
+        for folder_name in os.listdir(UPLOAD_BASE_DIR):
+            if task_id in folder_name:
+                folder_path = os.path.join(UPLOAD_BASE_DIR, folder_name)
+                if os.path.isdir(folder_path):
+                    shutil.rmtree(folder_path)
+                    print(f"[{task_id}] Folder upload dibersihkan: {folder_path}")
+
+        # Hapus data dari task_progress (in-memory)
+        if task_id in task_progress:
+            del task_progress[task_id]
+            print(f"[{task_id}] Task progress dibersihkan dari memory")
+
+    except Exception as e:
+        print(f"[{task_id}] Gagal melakukan cleanup: {str(e)}")
+
 def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at):
     global uploaded_data
     global uploaded_data_2
@@ -978,6 +986,12 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
     current_datetime = datetime.now()
     total_files = len(files)
     
+    identitas = None
+    session_identitas = None
+    
+    npwp = None
+    session_npwp = None
+    
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
         progress = 10 + int(70 * (idx / total_files))
         task_progress[task_id]['progress'] = progress
@@ -1063,6 +1077,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 table_data = uploaded_data.to_html(classes="table table-striped", index=False)
                 
                 if 'individual' in data:
+                    
                     json_individual = data['individual']
                     json_paramPencarian = json_individual.get('parameterPencarian', {})
                     json_dpdebitur = json_individual.get('dataPokokDebitur', [])
@@ -1073,6 +1088,22 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     json_fGaransi = fasilitas.get('garansiYgDiberikan', [])
                     json_fFasilitasLain = fasilitas.get('fasilitasLain', [])
                     nomor_laporan = json_individual.get('nomorLaporan')
+                    
+                    identitas = json_paramPencarian.get('noIdentitas', '')
+                    
+                    # Validasi identitas untuk sesi upload
+                    if session_identitas is None:
+                        # File pertama - simpan identitas sebagai referensi
+                        session_identitas = identitas
+                    else:
+                        # File kedua dan seterusnya - bandingkan dengan identitas file pertama
+                        if identitas != session_identitas:
+                            return {
+                                "error": True,
+                                "error_type": "validation_error",
+                                "message": f"File yang diupload tidak konsisten. File pertama: {session_identitas}, File ke-{idx}: {identitas}. Pastikan semua file dalam satu sesi upload memiliki Nomor Identitas yang sama.",
+                                "redirect_url": "/upload-big-size"
+                            }
 
                     # Hapus key yang ada saja
                     for key in ['dataPokokDebitur', 'parameterPencarian', 'ringkasanFasilitas', 'fasilitas']:
@@ -1186,6 +1217,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         session['data_available'] = True
 
                 elif 'perusahaan' in data:
+                    
                     json_perusahaan = data['perusahaan']
                     json_paramPencarian = json_perusahaan.get('parameterPencarian', {})
                     json_dpdebitur = json_perusahaan.get('dataPokokDebitur', [])
@@ -1199,6 +1231,36 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     json_fFasilitasLain = fasilitas.get('fasilitasLain', [])
                     json_kPengurusPemilik = json_perusahaan.get('kelompokPengurusPemilik', None)
                     nomor_laporan = json_perusahaan.get('nomorLaporan')
+                    
+                    npwp = json_paramPencarian.get('npwp', '')
+                    print(f"Get NPWP: {npwp}")
+                    
+                    # Validasi NPWP untuk sesi upload
+                    if session_npwp is None:
+                        # File pertama - simpan NPWP sebagai referensi
+                        print(f"Before NPWP: {session_npwp} - NPWP: {npwp}")
+                        session_npwp = npwp
+                        print(f"After NPWP: {session_npwp} - NPWP: {npwp}")
+                    else:
+                        # File kedua dan seterusnya - bandingkan dengan NPWP file pertama
+                        print(f"Validasi NPWP: {session_npwp} - NPWP: {npwp}")
+                        if npwp != session_npwp:
+                            print(f"Not same NPWP: {session_npwp} - NPWP: {npwp}")
+                            task_progress[task_id]['status'] = 'error'
+                            task_progress[task_id]['result'] = {
+                                'error': f"File yang diupload tidak konsisten. File pertama: {session_npwp}, File ke-{idx}: {npwp}. Pastikan semua file dalam satu sesi upload memiliki NPWP yang sama.",
+                                "redirect_url": "/upload-big-size"
+                                }
+                            task_progress[task_id]['error_type'] = 'validation_error'
+                            
+                            # Optional: bersihkan sisa data yang sudah masuk jika ada
+                            cleanup_upload(task_id)  # buat fungsi ini jika perlu
+                            return {
+                                "error": True,
+                                "error_type": "validation_error",
+                                "message": f"File yang diupload tidak konsisten. File pertama: {session_npwp}, File ke-{idx}: {npwp}. Pastikan semua file dalam satu sesi upload memiliki NPWP yang sama.",
+                                "redirect_url": "/upload-big-size"
+                            }
 
                     # Hapus key yang ada saja
                     for key in ['dataPokokDebitur', 'parameterPencarian', 'ringkasanFasilitas', 'fasilitas', 'kelompokPengurusPemilik']:
@@ -2248,46 +2310,77 @@ def task_status_big_size_file(task_id):
     result = task_results[task_id]
 
     if result["status"] == "error":
-        flash(f"Terjadi kesalahan saat memproses file: {result['error']}")
-        return redirect(url_for('upload_big_size_file'))
+        # Handle different types of errors
+        error_type = result.get("error_type", "general_error")
+        error_message = result.get("error", "Unknown error")
+        redirect_url = result.get("redirect_url", "/upload-big-size")
+        
+        if error_type == "validation_error":
+            # For validation errors, show alert and redirect
+            return f'''
+                <script>
+                    alert("{error_message}");
+                    window.location.href = "{redirect_url}";
+                </script>
+            '''
+        else:
+            # For system errors, use flash message
+            flash(f"Terjadi kesalahan saat memproses file: {error_message}")
+            return redirect(url_for('upload_big_size_file'))
 
     # Jika berhasil → arahkan ke halaman utama upload dengan flash message
-    # flash("File berhasil diupload!")
-    # return redirect(url_for('upload_big_size_file'))
     return '''
         <script>
             alert("File berhasil diupload!");
-            window.location.href = "/upload-big-size"; // Redirect setelah alert
+            window.location.href = "/upload-big-size";
         </script>
     '''
     
 @app.route('/api/task-status-big-size-file/<task_id>')
-def task_status_big_size_file_api(task_id):
-    """API endpoint to check task status"""
-    # Check if task_id is "null" (string) or None
+def get_task_status_big_size_file(task_id):
     if task_id == "null" or not task_id:
         return jsonify({'status': 'completed'})
-    
-    # Check if task is in progress tracker
-    if task_id in task_progress:
-        progress_info = task_progress[task_id]
-        status = progress_info.get('status', 'Processing')
+
+    progress = task_progress.get(task_id)
+    result = {}
+
+    if progress:
+        status = progress.get('status', 'Processing')
+        result = progress.get('result', {})
+        progress_value = progress.get('progress', 0)
+
+        if result.get('status') == 'error':
+            return jsonify({
+                'status': 'error',
+                'message': result.get('message', 'Terjadi kesalahan'),  # ✅ FIX DI SINI!
+                'error_type': result.get('error_type', 'general_error'),
+                'redirect_url': result.get('redirect_url', '/upload-big-size')
+            })
         
-        # If progress is 100%, return completed
-        if progress_info.get('progress', 0) >= 100:
+        if progress_value >= 100:
             return jsonify({'status': 'completed'})
         
-        # Return current status
-        return jsonify({'status': status})
-    
-    # Check if task is in results
+        return jsonify({
+            'status': status,
+            'progress': progress_value,
+            'result': result
+        })
+
+    # Cek hasil yang sudah selesai dan disimpan di task_results
     if task_id in task_results:
-        result = task_results[task_id]
+        result = task_results.get(task_id)
+        app.logger.info(f"[{task_id}] STATUS RESPONSE TO FRONTEND: {result}")
+
         if result.get('status') == 'error':
-            return jsonify({'status': 'error', 'message': result.get('error', 'Unknown error')})
+            return jsonify({
+                'status': 'error',
+                'message': result.get('message', 'Terjadi kesalahan'),  # ✅ PENTING!
+                'error_type': result.get('error_type', 'general_error'),
+                'redirect_url': result.get('redirect_url', '/upload-big-size')
+            })
         return jsonify({'status': 'completed'})
-    
-    # Default to completed if not found (assume old completed task)
+
+    # Default: anggap selesai jika tidak ditemukan
     return jsonify({'status': 'completed'})
 
 # Daftar tabel yang akan diekspor
@@ -2422,6 +2515,17 @@ def get_progress_status(task_id):
             'progress': progress_info.get('progress', 0),
             'status': progress_info.get('status', 'Processing')
         })
+    
+    # Check if task has error in results
+    if task_id in task_results:
+        result = task_results[task_id]
+        if result.get('status') == 'error':
+            return jsonify({
+                'progress': 100, 
+                'status': 'Error',
+                'error': result.get('error', 'Unknown error'),
+                'error_type': result.get('error_type', 'general_error')
+            })
     
     # If task is not in progress tracker, assume it's done
     return jsonify({'progress': 100, 'status': 'Done'})
@@ -2704,10 +2808,11 @@ def upload_big_size_file():
         
         # Dropdown filter options
         filter_options = get_filter_options()
-
+        show_processing_alert = session.pop('show_processing_alert', False)
         return render_template(
             'upload_big_size.html',
             show_alert=show_alert,
+            show_processing_alert=show_processing_alert,
             data=paginated_data,
             filter_options=filter_options,
             selected_filters={
@@ -2721,7 +2826,8 @@ def upload_big_size_file():
             flags=FLAGS,
             role_access=role_access,
             fullname=fullname,
-            task_progress=current_task_progress
+            task_progress=current_task_progress,
+            task_id=session.get('task_id', None)
         )
 
     elif request.method == 'POST':
@@ -2827,13 +2933,10 @@ def upload_big_size_file():
             # Simpan task_id di session dan set flag upload_done
             session['task_id'] = task_id
             session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
-
-            return '''
-                <script>
-                    alert("Files are being processed in the background.");
-                    window.location.href = "/upload-big-size";
-                </script>
-            '''
+            session['show_processing_alert'] = True
+            
+            return redirect(url_for('upload_big_size_file'))
+        
         except Exception as e:
             print(f"Error during upload: {e}")
             # flash(f'Error during upload: {e}', 'error')
@@ -2893,6 +2996,30 @@ def download_excel(periodeData, username, namaFileUpload, uploadDate):
         print(f"Error in download_excel: {str(e)}")
         traceback.print_exc()  # Print full stack trace for debugging
         return jsonify({"error": str(e)}), 500
+
+@app.route('/handle-upload-error/<task_id>')
+def handle_upload_error(task_id):
+    """Handle upload errors and redirect appropriately"""
+    if task_id in task_results:
+        result = task_results[task_id]
+        if result.get('status') == 'error':
+            error_type = result.get('error_type', 'general_error')
+            error_message = result.get('error', 'Unknown error')
+            redirect_url = result.get('redirect_url', '/upload-big-size')
+            
+            # Clean up task results after handling
+            del task_results[task_id]
+            if task_id in task_progress:
+                del task_progress[task_id]
+            
+            return f'''
+                <script>
+                    alert("{error_message}");
+                    window.location.href = "{redirect_url}";
+                </script>
+            '''
+    
+    return redirect(url_for('upload_big_size_file'))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, threads=16, debug=True)
