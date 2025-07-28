@@ -140,6 +140,12 @@ th, td {
 th {
     background-color: #f4f7fc;
 }
+
+th.sorting {
+    color: #000;
+    cursor: pointer;
+}
+
 .change-password-card {
     background: white;
     padding: 2rem;
