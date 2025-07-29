@@ -1,0 +1,23 @@
+<!-- base_modal.html -->
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+  <div class="modal-dialog {{ modal_class|default('') }}">
+    <div class="modal-content {{ border_class|default('') }}">
+      <div class="modal-header {{ header_class|default('') }}">
+        <h5 class="modal-title" id="{{ modal_id }}Label">
+          {{ modal_icon|safe }} {{ modal_title }}
+        </h5>
+        {% if closable %}
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        {% endif %}
+      </div>
+      <div class="modal-body">
+        {{ modal_body|safe }}
+      </div>
+      {% if modal_footer %}
+      <div class="modal-footer">
+        {{ modal_footer|safe }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>

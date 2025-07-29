@@ -180,7 +180,7 @@ def process_files_worker():
             continue
 
         conn = None
-        should_mark_done = True
+        validation_failed = False
 
         try:
             bulan_dict = {
@@ -236,94 +236,135 @@ def process_files_worker():
                         ident = obj.get('parameterPencarian', {}).get(ident_key, '')
 
                         if not posisi or not ident:
-                            raise ValueError(f"File {uploaded_file.filename} tidak memiliki data posisi atau identitas.")
+                            error_msg = f"File {uploaded_file.filename} tidak memiliki data posisi atau identitas."
+                            task_results[task_id] = {
+                                'status': 'error',
+                                'message': error_msg,
+                                'error_type': 'validation_error'
+                            }
+                            task_progress[task_id].update({
+                                'status': 'error',
+                                'progress': 100,
+                                'error_type': 'validation_error',
+                                'message': error_msg
+                            })
+                            
+                            # ✅ PERBAIKAN: Cleanup folder dan mark task done
+                            try:
+                                if os.path.exists(upload_folder_path):
+                                    shutil.rmtree(upload_folder_path)
+                            except Exception as cleanup_error:
+                                app.logger.error(f"Error hapus folder: {cleanup_error}")
+                            
+                            # ✅ PERBAIKAN: Jangan return, biarkan flow normal untuk cleanup
+                            break  # keluar dari loop encoding
 
                         if ident_key == 'npwp':
                             if session_npwp is None:
                                 session_npwp = ident
                             elif session_npwp != ident:
-                                raise ValueError(f"NPWP file ke-{idx+1} tidak konsisten.")
+                                error_msg = f"NPWP file ke-{idx+1} tidak konsisten dengan file pertama."
+                                task_results[task_id] = {
+                                    'status': 'error',
+                                    'message': error_msg,
+                                    'error_type': 'validation_error'
+                                }
+                                task_progress[task_id].update({
+                                    'status': 'error',
+                                    'progress': 100,
+                                    'error_type': 'validation_error',
+                                    'message': error_msg
+                                })
+                                
+                                # ✅ PERBAIKAN: Cleanup folder
+                                try:
+                                    if os.path.exists(upload_folder_path):
+                                        shutil.rmtree(upload_folder_path)
+                                except Exception as cleanup_error:
+                                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+                                
+                                # ✅ PERBAIKAN: Set flag untuk keluar dari loop utama
+                                validation_failed = True
+                                break  # keluar dari loop encoding
                         else:
                             if session_identitas is None:
                                 session_identitas = ident
                             elif session_identitas != ident:
-                                raise ValueError(f"Identitas file ke-{idx+1} tidak konsisten.")
+                                error_msg = f"Identitas file ke-{idx+1} tidak konsisten dengan file pertama."
+                                task_results[task_id] = {
+                                    'status': 'error',
+                                    'message': error_msg,
+                                    'error_type': 'validation_error'
+                                }
+                                task_progress[task_id].update({
+                                    'status': 'error',
+                                    'progress': 100,
+                                    'error_type': 'validation_error',
+                                    'message': error_msg
+                                })
+                                
+                                try:
+                                    if os.path.exists(upload_folder_path):
+                                        shutil.rmtree(upload_folder_path)
+                                except Exception as cleanup_error:
+                                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+                                
+                                # task_queue.task_done()
+                                # return
+                                validation_failed = True
+                                break
 
+                        # Parse periode data dari posisi
                         date_obj = datetime.strptime(posisi, "%Y%m")
                         periode_data = f"{bulan_dict[date_obj.month]} {date_obj.year}"
 
                         file_processed = True
                         break
 
-                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError):
+                    except (json.JSONDecodeError, ValueError, Exception) as e:
                         continue
-                    except Exception as e:
-                        # Set error status dan keluar dari loop processing
-                        error_msg = str(e)
-                        
-                        if task_id in task_progress:
-                            task_progress[task_id]['status'] = 'error'
-                            task_progress[task_id]['progress'] = 100
-                            task_progress[task_id]['timestamp'] = time.time()
-                            task_progress[task_id]['message'] = error_msg
-                            task_progress[task_id]['error_type'] = 'validation_error'
-                        
-                        task_results[task_id] = {
-                            "status": "error",
-                            "message": error_msg,
-                            "error_type": "validation_error",
-                            "redirect_url": "/upload-big-size"
-                        }
-                        
-                        app.logger.error(f"[{task_id}] Error parsing file {uploaded_file.filename}: {e}")
-                        
-                        # Clean up folder
-                        try:
-                            if os.path.exists(upload_folder_path):
-                                shutil.rmtree(upload_folder_path)
-                        except Exception as cleanup_error:
-                            app.logger.error(f"Error hapus folder: {cleanup_error}")
-                        
-                        # Mark task as done and set flag to prevent double marking
-                        should_mark_done = False
-                        task_queue.task_done()
-                        return  # Exit the worker function
 
+                # Reset stream position untuk file berikutnya
                 uploaded_file.stream.seek(0)
+                
+                if validation_failed:
+                    break
 
+                # Jika tidak ada encoding yang berhasil
                 if not file_processed:
                     error_msg = f"Gagal memproses file: {uploaded_file.filename}"
-                    
-                    # Set error status
-                    if task_id in task_progress:
-                        task_progress[task_id]['status'] = 'error'
-                        task_progress[task_id]['progress'] = 100
-                        task_progress[task_id]['timestamp'] = time.time()
-                        task_progress[task_id]['message'] = error_msg
-                        task_progress[task_id]['error_type'] = 'validation_error'
                     
                     task_results[task_id] = {
                         "status": "error",
                         "message": error_msg,
-                        "error_type": "validation_error",
-                        "redirect_url": "/upload-big-size"
+                        "error_type": "validation_error"
                     }
+                    
+                    task_progress[task_id].update({
+                        'status': 'error',
+                        'progress': 100,
+                        'error_type': 'validation_error',
+                        'message': error_msg
+                    })
                     
                     app.logger.error(f"[{task_id}] {error_msg}")
                     
-                    # Clean up folder
                     try:
                         if os.path.exists(upload_folder_path):
                             shutil.rmtree(upload_folder_path)
                     except Exception as cleanup_error:
                         app.logger.error(f"Error hapus folder: {cleanup_error}")
                     
-                    # Mark task as done and set flag to prevent double marking
-                    should_mark_done = False
-                    task_queue.task_done()
-                    return
-
-            # ✅ Validasi selesai, baru insert metadata 1x
+                    validation_failed = True
+                    break
+                
+            if validation_failed:
+                # Task sudah di-set sebagai error di task_results dan task_progress
+                # Langsung mark task done dan return
+                task_queue.task_done()
+                return
+            
+            # Validasi selesai, baru insert metadata 1x
             uploaded_at = datetime.now()
 
             if not periode_data:
@@ -378,43 +419,8 @@ def process_files_worker():
 
                 app.logger.info(f"[{task_id}] Selesai diproses.")
 
-        except ValueError as e:
-            # Set error status untuk validation error
-            error_msg = str(e)
-            
-            if task_id in task_progress:
-                task_progress[task_id]['status'] = 'error'
-                task_progress[task_id]['progress'] = 100
-                task_progress[task_id]['timestamp'] = time.time()
-                task_progress[task_id]['message'] = error_msg
-                task_progress[task_id]['error_type'] = 'validation_error'
-            
-            task_results[task_id] = {
-                "status": "error",
-                "message": error_msg,
-                "error_type": "validation_error",
-                "redirect_url": "/upload-big-size"
-            }
-            
-            app.logger.error(f"[{task_id}] Error validasi: {e}")
-            
-            # Clean up folder
-            try:
-                if os.path.exists(upload_folder_path):
-                    shutil.rmtree(upload_folder_path)
-            except Exception as cleanup_error:
-                app.logger.error(f"Error hapus folder: {cleanup_error}")
-
         except Exception as e:
-            # Set error status untuk system error
-            error_msg = f"System error: {str(e)}"
-            
-            if task_id in task_progress:
-                task_progress[task_id]['status'] = 'error'
-                task_progress[task_id]['progress'] = 100
-                task_progress[task_id]['timestamp'] = time.time()
-                task_progress[task_id]['message'] = error_msg
-                task_progress[task_id]['error_type'] = 'system_error'
+            error_msg = f"Error tidak terduga: {str(e)}"
             
             task_results[task_id] = {
                 "status": "error",
@@ -422,7 +428,20 @@ def process_files_worker():
                 "error_type": "system_error"
             }
             
-            app.logger.error(f"[{task_id}] Error tak terduga: {e}")
+            task_progress[task_id].update({
+                'status': 'error',
+                'progress': 100,
+                'error_type': 'system_error',
+                'message': error_msg
+            })
+            
+            app.logger.error(f"[{task_id}] {error_msg}")
+            
+            try:
+                if os.path.exists(upload_folder_path):
+                    shutil.rmtree(upload_folder_path)
+            except Exception as cleanup_error:
+                app.logger.error(f"Error hapus folder: {cleanup_error}")
 
         finally:
             if conn:
@@ -430,7 +449,7 @@ def process_files_worker():
                     conn.close()
                 except:
                     pass
-            if should_mark_done:
+            if not validation_failed:
                 task_queue.task_done()
 
 # Jalankan 4 worker thread
@@ -2405,6 +2424,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     table_data_cf_5 = f"Error processing closed facilities: {e}"
             
         # Update progress to 100% (completed)
+        conn.commit()
         task_progress[task_id]['progress'] = 100
         task_progress[task_id]['status'] = 'completed'
         
@@ -2510,50 +2530,72 @@ def get_data_for_display():
 def get_progress_status(task_id):
     global served_final_status
     """Get progress percentage for a task"""
+
     # Jika task_id kosong atau "null", anggap sudah selesai
-    if served_final_status.get(task_id):
-        # Task sudah final dan sudah dikirimkan → kosongkan respon
-        return jsonify({"progress": 100, "status": "completed"})
-    
     if task_id == "null" or not task_id:
         return jsonify({'progress': 100, 'status': 'completed'})
 
-    # Jika task sudah selesai dan ada hasilnya
+    # ✅ Jika task sudah selesai (baik error atau success)
     if task_id in task_results:
         result = task_results[task_id]
-        if result.get('status') == 'error':
-            served_final_status[task_id] = True  # tandai sudah selesai
-            return jsonify({
+        status = result.get('status')
+
+        if status == 'error':
+            error_type = result.get('error_type', 'general_error')
+
+            # Jangan set served_final_status untuk validation_error
+            if error_type != 'validation_error':
+                served_final_status[task_id] = True
+
+            response_data = {
                 'progress': 100,
                 'status': 'error',
                 'message': result.get('message', 'Unknown error'),
-                'error_type': result.get('error_type', 'general_error')
-            })
-        else:
-            served_final_status[task_id] = True
+                'error_type': error_type,
+                'is_final': error_type != 'validation_error'
+            }
+
+            # Tambahkan metadata jika ada
+            metadata = task_progress.get(task_id, {}).get('temp_metadata')
+            if metadata:
+                response_data['metadata'] = metadata
+
+            return jsonify(response_data)
+
+        elif status == 'completed':
+            if not served_final_status.get(task_id):
+                served_final_status[task_id] = True
             return jsonify({'progress': 100, 'status': 'completed'})
 
-    # Jika task masih berjalan
+    # ✅ Jika task masih dalam proses
     progress_info = task_progress.get(task_id)
     if progress_info:
         progress_value = progress_info.get('progress', 0)
         status = progress_info.get('status', 'processing').lower()
 
-        # Jika sedang error saat proses
+        response_data = {
+            'progress': progress_value,
+            'status': status
+        }
+
         if status == 'error':
-            return jsonify({
-                'progress': 100,
-                'status': 'error',
+            response_data.update({
                 'message': progress_info.get('message', 'Processing error occurred'),
-                'error_type': progress_info.get('error_type', 'general_error')
+                'error_type': progress_info.get('error_type', 'general_error'),
+                'is_final': progress_info.get('error_type') != 'validation_error'
             })
 
-        return jsonify({
-            'progress': progress_value,
-            'status': 'processing' if progress_value < 100 else 'completed'
-        })
+        # Tambahkan metadata jika ada
+        metadata = progress_info.get('temp_metadata')
+        if metadata:
+            response_data['metadata'] = metadata
 
-    # Jika task tidak ditemukan, anggap selesai
+        return jsonify(response_data)
+
+    # ✅ Jika task tidak ditemukan tapi belum pernah diserve final status
+    if not served_final_status.get(task_id):
+        served_final_status[task_id] = True
+
     return jsonify({'progress': 100, 'status': 'completed'})
 
 # Fungsi untuk mengekspor data tabel ke Excel (versi sederhana)
@@ -2892,13 +2934,15 @@ def upload_big_size_file():
             # Masukkan ke task_progress
             task_progress[task_id] = {
                 'progress': 0,
-                'status': 'Processing',
+                'status': 'processing', # pastikan status awal adalah 'processing'
                 'key': f"{username}_{nama_file}_{flag}",
                 'temp_metadata': {
                     'username': username,
                     'namaFileUpload': nama_file,
-                    'uploadDate': current_datetime,
-                    'task_id': task_id
+                    'periodeData': flag,  # ✅ Gunakan flag sebagai periode sementara
+                    'uploadDate': current_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+                    'task_id': task_id,
+                    'fullname': fullname
                 }
             }
 
@@ -2913,8 +2957,9 @@ def upload_big_size_file():
             
             # Simpan task_id di session dan set flag upload_done
             session['task_id'] = task_id
-            session['upload_done'] = False  # Akan diubah menjadi True setelah proses selesai
+            session['upload_done'] = False
             session['show_processing_alert'] = True
+            session['temp_filename'] = nama_file
             
             return redirect(url_for('upload_big_size_file'))
         
@@ -2924,17 +2969,22 @@ def upload_big_size_file():
             return redirect(url_for('upload_big_size_file'))
             
 @app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
-def download_excel(periodeData, username, namaFileUpload, uploadDate):
+def download_big_size(periodeData, username, namaFileUpload, uploadDate):
     try:
         # URL decode parameters
         periodeData = urllib.parse.unquote(periodeData)
         username = urllib.parse.unquote(username)
         namaFileUpload = urllib.parse.unquote(namaFileUpload)
-        uploadDate = urllib.parse.unquote(uploadDate)
         downloadType = "Output Excel"
         downloadDate = datetime.now()
+        uploadDate = urllib.parse.unquote(uploadDate)
         
         try:
+            # Konversi dari string "29 July 2025, 16:26" ke objek datetime
+            dt_obj = datetime.strptime(uploadDate, "%d %B %Y, %H:%M")
+            
+            # Ubah ke format SQL Server-friendly "YYYY-MM-DD HH:MM:SS"
+            uploadDate = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
         
             conn = get_db_connection()
             cursor = conn.cursor()

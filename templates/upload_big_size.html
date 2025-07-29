@@ -25,8 +25,8 @@
                         <label for="file" class="form-label me-2">Select Text File(s)</label>
                         <small class="text-danger">*Maksimal size file upload 200MB</small> 
                     </div>
-                    <small class="text-danger">
-                        <i class="fas fa-exclamation-triangle"></i> Pastikan file yang diupload memiliki <strong>NPWP</strong> atau <strong>Nomor Identitas</strong> yang sama. Jika tidak sama, sistem <u>tidak akan menyimpan</u> file tersebut.
+                    <small class="text-success">
+                        <i class="fas fa-exclamation-triangle"></i> Pastikan file yang diupload memiliki <strong>NPWP</strong> atau <strong>Nomor Identitas</strong> yang sama. Jika tidak sama, sistem <u>tidak akan memproses</u> file tersebut.
                     </small>
                 </div>
                 <input type="file" name="file" class="form-control mt-2" accept=".txt" multiple required>
@@ -73,24 +73,30 @@
                     {% for item in data %}
                     {% set task_id = item.task_id %}
                     {% set task = task_progress.get(task_id) %}
+                    
                     {% if task is mapping %}
-                    {% set progress = task.get('progress', 0) %}
+                        {% set progress = task.get('progress', 0) %}
+                        {% set status = task.get('status', 'processing') %}
                     {% else %}
-                    {% set progress = 100 if not task_id or task_id == 'null' else 0 %}
-                    {% endif %}
-
-                    <!-- {% set progress = task_progress.get(task_id, 100 if not task_id else 0) %} -->
-                    {% set task = task_progress.get(task_id) %}
-                    {% if task is mapping %}
-                    {% set status = task.get('status', 'processing') %}
-                    {% else %}
-                    {% set status = 'completed' if not task_id or task_id == 'null' else 'processing' %}
+                        {% if task_id and task_id != 'null' %}
+                            {% set progress = 0 %}
+                            {% set status = 'processing' %}
+                        {% else %}
+                            {% set progress = 100 %}
+                            {% set status = 'completed' %}
+                        {% endif %}
                     {% endif %}
 
                     <tr>
                         <td>{{ item.namaFileUpload }}</td>
                         <td>{{ item.periodeData }}</td>
-                        <td class="text-nowrap">{{ item.uploadDate if item.uploadDate else 'N/A' }}</td>
+                        <td class="text-nowrap">
+                            {% if item.uploadDate %}
+                                {{ item.uploadDate }}
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </td>
                         <td>
                             <div class="progress" style="height: 18px;">
                                 <div id="progress-bar-{{ task_id or 'static-' ~ loop.index }}"
@@ -104,7 +110,7 @@
                         <td>
                             {% if progress == 100 and status != 'error' %}
                                 <div class="btn-group">
-                                    <a href="{{ url_for('download_excel', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
+                                    <a href="{{ url_for('download_big_size', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
                                        class="btn btn-outline-success btn-sm" title="Download Excel">Excel
                                         <i class="fas fa-file-excel"></i>
                                     </a>
@@ -131,86 +137,19 @@
     </div>
 </div>
 
-<!-- Success Notification Modal -->
-<div class="modal fade" id="successNotificationModal" tabindex="-1" aria-labelledby="successNotificationModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content border border-success">
-            <div class="modal-header bg-success text-white">
-                <h5 class="modal-title" id="successNotificationModalLabel">
-                    <i class="fas fa-check-circle"></i> Upload Berhasil
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<!-- Base Modal -->
+{% include "base_modal.html" with context %}
+
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
+    <div id="uploadToast" class="toast align-items-center text-white bg-info border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body">
+                <i class="fas fa-spinner fa-spin me-2"></i> Upload sedang diproses...
             </div>
-            <div class="modal-body">
-                <p id="successNotificationMessage">File berhasil diupload dan diproses!</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-success" onclick="window.location.reload()">OK</button>
-            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
         </div>
     </div>
 </div>
-
-<!-- Error Notification Modal -->
-<div class="modal fade" id="errorNotificationModal" tabindex="-1" 
-     aria-labelledby="errorNotificationModalLabel" aria-hidden="true" 
-     data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog">
-        <div class="modal-content border border-danger">
-            <div class="modal-header bg-danger text-white">
-                <h5 class="modal-title" id="errorNotificationModalLabel">
-                    <i class="fas fa-exclamation-triangle"></i> Upload Gagal
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div id="errorNotificationMessage" class="text-danger"></div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-danger" onclick="window.location.reload()">OK</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Duplicate File Modal -->
-<div class="modal fade" id="duplicateFileModal" tabindex="-1" aria-labelledby="duplicateFileModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title" id="duplicateFileModalLabel">
-                    <i class="fas fa-exclamation-triangle"></i> Peringatan
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <p><strong>Nama File sudah ada!</strong></p>
-                <p>Harap masukkan nama file yang lain.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Validation Error Modal -->
-<div class="modal fade" id="validationErrorModal" tabindex="-1" aria-labelledby="validationErrorModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-danger">
-      <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title" id="validationErrorModalLabel">Error Validasi</h5>
-      </div>
-      <div class="modal-body" id="validationErrorModalBody">
-        <!-- Pesan error akan dimasukkan di sini -->
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-danger" onclick="location.reload();">OK</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 
 {% if task_id %}
     <script>
@@ -225,6 +164,7 @@
     // Global error tracking
     const errorList = {}; 
     const validationErrorList = {}; 
+    let taskMetadataCache = {};
 
     // Get existing file names from the table for client-side check
     const existingFileNames = [
@@ -233,7 +173,15 @@
         {% endfor %}
     ];
 
-    
+    function showUploadStartedToast() {
+        const toastEl = document.getElementById("uploadToast");
+        const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
+        toast.show();
+    }
+
+    document.getElementById("uploadForm").addEventListener("submit", function (e) {
+        showUploadStartedToast();  // ⬅️ Tampilkan modal ketika form disubmit
+    });
 
     // Function to check if filename already exists
     function checkFilenameExists(filename) {
@@ -244,6 +192,110 @@
     function showDuplicateFileAlert() {
         const modal = new bootstrap.Modal(document.getElementById('duplicateFileModal'));
         modal.show();
+    }
+
+    function addNewRowToTable(taskId, filename, currentDate) {
+        const table = $('#uploadTable').DataTable();
+        
+        // Cek apakah row dengan task ini sudah ada
+        const existingRow = document.getElementById(`progress-bar-${taskId}`);
+        if (existingRow) {
+            console.log(`Row for task ${taskId} already exists`);
+            return;
+        }
+        
+        // ✅ Gunakan metadata dari cache jika tersedia
+        const metadata = taskMetadataCache[taskId];
+        const displayName = metadata ? metadata.namaFileUpload : filename;
+        const displayPeriode = metadata ? metadata.periodeData : '-';
+        const displayDate = metadata ? metadata.uploadDate : currentDate;
+        
+        // Buat row baru
+        const rowNode = table.row.add([
+            displayName,
+            displayPeriode,
+            displayDate,
+            `<div class="progress" style="height: 18px;">
+                <div id="progress-bar-${taskId}"
+                    class="progress-bar progress-bar-striped progress-bar-animated"
+                    role="progressbar" style="width: 0%;"
+                    aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                    0%
+                </div>
+            </div>`,
+            `<button id="download-btn-${taskId}" class="btn btn-secondary btn-sm" disabled>
+                <i class="fas fa-spinner fa-spin"></i> Processing
+            </button>`
+        ]).draw().node();
+        
+        // Pindahkan row baru ke posisi paling atas
+        $(rowNode).prependTo(table.table().body());
+        table.draw();
+        
+        console.log(`Added new row for task: ${taskId}`);
+    }
+
+    function removeTaskRow(taskId) {
+        const progressBar = document.getElementById(`progress-bar-${taskId}`);
+        if (progressBar) {
+            const row = progressBar.closest('tr');
+            if (row) {
+                const table = $('#uploadTable').DataTable();
+                table.row(row).remove().draw();
+                console.log(`Removed row for task: ${taskId}`);
+            }
+        }
+        
+        // Bersihkan cache metadata
+        delete taskMetadataCache[taskId];
+    }
+
+    function handleTaskCompletion(taskId, isError = false, errorMessage = "") {
+        if (completedTasks.has(taskId)) return;
+        completedTasks.add(taskId);
+
+        if (sessionStorage.getItem(`popup_shown_${taskId}`)) return;
+        sessionStorage.setItem(`popup_shown_${taskId}`, 'true');
+        
+        activeTaskCount = Math.max(0, activeTaskCount - 1);
+
+        console.log(`Task ${taskId} ${isError ? 'failed' : 'completed'}. Active tasks remaining: ${activeTaskCount}`);
+
+        if (isError) {
+            const errorType = errorList[taskId]?.type || "general_error";
+            
+            // ✅ PERBAIKAN: Deteksi validation error dari message
+            const isValidationError = errorType === "validation_error" || 
+                                    errorMessage.includes("NPWP") || 
+                                    errorMessage.includes("tidak konsisten") ||
+                                    errorMessage.includes("validation");
+            
+            if (isValidationError) {
+                showValidationErrorModal(errorMessage);
+            } else {
+                showErrorNotificationModal(errorMessage);
+            }
+        } else {
+            if (activeTaskCount > 0) {
+                showSuccessNotificationModal("File berhasil diupload! Masih ada proses upload lain yang sedang berjalan.");
+            }
+        }
+
+        // Check if all tasks are completed
+        if (activeTaskCount <= 0) {
+            const totalErrors = Object.keys(errorList).length;
+            const totalTasks = taskIds.length;
+
+            setTimeout(() => {
+                if (totalErrors === totalTasks && totalTasks > 0) {
+                    showErrorNotificationModal("Semua proses upload gagal. Periksa file yang diupload!");
+                } else if (totalErrors > 0) {
+                    showErrorNotificationModal("Proses upload selesai, namun beberapa file mengalami error.");
+                } else if (!isError && totalTasks > 0) {
+                    showSuccessNotificationModal("Semua file berhasil diupload dan diproses!");
+                }
+            }, 500);
+        }
     }
 
     // Real-time validation on input
@@ -311,6 +363,7 @@
         .catch(error => {
             console.error('Error checking filename:', error);
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+            showUploadStartedToast();
             this.submit();
         });
     });
@@ -319,7 +372,6 @@
         // Get all task IDs (filter out null/empty values)
         const rawTaskIds = {{ data | map(attribute='task_id') | list | tojson }};
         const taskIds = rawTaskIds.filter(id => {
-            // More strict filtering to prevent None/null values
             return id && 
                 id !== null && 
                 id !== "null" && 
@@ -334,34 +386,54 @@
         const completedTasks = new Set();
         let activeTaskCount = 0;
 
-        const filteredTaskIds = taskIds.filter(taskId => {
+        taskIds.forEach(taskId => {
             const bar = document.getElementById(`progress-bar-${taskId}`);
-            if (!bar) return false;
-
-            const progress = parseInt(bar.getAttribute("aria-valuenow") || "0");
-            const isError = bar.classList.contains("bg-danger");
-
-            // Kalau sudah 100% atau error, anggap sudah selesai (tidak perlu polling)
-            if (progress >= 100 || isError) {
-                completedTasks.add(taskId);
-                return false; // exclude dari polling
+            if (bar) {
+                const progress = parseInt(bar.getAttribute("aria-valuenow") || "0");
+                const isError = bar.classList.contains("bg-danger");
+                
+                if (progress >= 100 || isError) {
+                    completedTasks.add(taskId);
+                } else {
+                    activeTaskCount++;
+                }
             }
-            return true; // keep untuk dipolling
         });
         
         const sessionTaskId = "{{ task_id }}";
         if (sessionTaskId &&
             sessionTaskId !== "None" &&
             sessionTaskId !== "null" &&
-            sessionTaskId.trim() !== "" &&
-            !taskIds.includes(sessionTaskId)) {
+            sessionTaskId.trim() !== "") {
             
-            taskIds.push(sessionTaskId);
-            filteredTaskIds.push(sessionTaskId);  // ⬅️ Tambahkan ini juga
+            if (!taskIds.includes(sessionTaskId)) {
+                taskIds.push(sessionTaskId);
+                const sessionBar = document.getElementById(`progress-bar-${sessionTaskId}`);
+                if (!sessionBar || parseInt(sessionBar.getAttribute("aria-valuenow") || "0") < 100) {
+                    activeTaskCount++;
+                }
+            }
         }
 
+        // ✅ Di sini kita deklarasikan filteredTaskIds SETELAH sessionTaskId ditambahkan
+        const filteredTaskIds = taskIds.filter(taskId => {
+            const bar = document.getElementById(`progress-bar-${taskId}`);
+            if (!bar) return true;
+
+            const progress = parseInt(bar.getAttribute("aria-valuenow") || "0");
+            const isError = bar.classList.contains("bg-danger");
+
+            if (progress >= 100 || isError) {
+                completedTasks.add(taskId);
+                return false;
+            }
+            return true;
+        });
+
         console.log("Valid Task IDs found:", taskIds);
-        console.log("Raw Task IDs:", rawTaskIds);
+        console.log("Filtered Task IDs for polling:", filteredTaskIds);
+        console.log(`Initial status: ${completedTasks.size} completed tasks, ${activeTaskCount} active tasks`);
+
 
         // Initialize DataTable
         var table = $('#uploadTable').DataTable({
@@ -420,27 +492,47 @@
 
         console.log(`Initial status: ${completedTasks.size} completed tasks, ${activeTaskCount} active tasks`);
 
+        function showToast(message, type = 'success') {
+            const toastEl = document.getElementById('uploadToast');
+            const toastBody = toastEl.querySelector('.toast-body');
+
+            toastBody.innerHTML = message;
+
+            // Ganti background sesuai jenis notifikasi
+            toastEl.classList.remove('bg-success', 'bg-danger', 'bg-warning', 'bg-info');
+
+            if (type === 'error') {
+                toastEl.classList.add('bg-danger');
+                toastBody.innerHTML = '<i class="fas fa-times-circle me-2"></i>' + message;
+            } else if (type === 'warning') {
+                toastEl.classList.add('bg-warning');
+                toastBody.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>' + message;
+            } else if (type === 'info') {
+                toastEl.classList.add('bg-info');
+                toastBody.innerHTML = '<i class="fas fa-info-circle me-2"></i>' + message;
+            } else {
+                toastEl.classList.add('bg-success');
+                toastBody.innerHTML = '<i class="fas fa-check-circle me-2"></i>' + message;
+            }
+
+            const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
+            toast.show();
+        }
+
         // Modal functions
         function showSuccessNotificationModal(message) {
-            console.log("Showing success modal:", message);
-            document.getElementById("successNotificationMessage").textContent = message;
-            const modal = new bootstrap.Modal(document.getElementById('successNotificationModal'));
-            modal.show();
+            console.log("Showing success toast:", message);
+            showToast(message, 'success');
         }
 
         function showErrorNotificationModal(message) {
-            console.log("Showing error modal:", message);
-            document.getElementById("errorNotificationMessage").textContent = message;
-            const modal = new bootstrap.Modal(document.getElementById('errorNotificationModal'));
-            modal.show();
+            console.log("Showing error toast:", message);
+            showToast(message, 'error');
         }
 
         function showValidationErrorModal(message) {
-            console.log("Memanggil showValidationErrorModal dengan pesan:", message);  // <--- DEBUG
-            const modalBody = document.getElementById("validationErrorModalBody");
-            modalBody.innerText = message;
-            const modal = new bootstrap.Modal(document.getElementById("validationErrorModal"));
-            modal.show();
+            console.log("Showing warning toast (validation):", message);
+            showToast(message, 'warning');
         }
 
         // Handle task completion
@@ -453,11 +545,17 @@
             
             activeTaskCount = Math.max(0, activeTaskCount - 1);
 
-            console.log(`Task ${taskId} ${isError ? 'failed' : 'completed'}. Active tasks remaining: ${activeTaskCount}`);
-
             if (isError) {
                 const errorType = errorList[taskId]?.type || "general_error";
-                if (errorType === "validation_error") {
+                
+                // ✅ PERBAIKAN: Deteksi validation error dari message
+                const isValidationError = errorType === "validation_error" || 
+                                        errorMessage.includes("NPWP") || 
+                                        errorMessage.includes("tidak konsisten") ||
+                                        errorMessage.includes("validation") ||
+                                        errorMessage.includes("Identitas");
+                
+                if (isValidationError) {
                     showValidationErrorModal(errorMessage);
                 } else {
                     showErrorNotificationModal(errorMessage);
@@ -522,41 +620,78 @@
             }
             
             if (downloadBtn) {
-                // Replace with actual download buttons
-                const row = downloadBtn.closest('tr');
-                const cells = row.querySelectorAll('td');
-                const namaFile = cells[0].textContent.trim();
-                const periode = cells[1].textContent.trim();
-                const uploadDate = cells[2].textContent.trim();
-                
-                downloadBtn.outerHTML = `
-                    <div class="btn-group">
-                        <a href="/download-excel?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
-                        class="btn btn-outline-success btn-sm" title="Download Excel">Excel
-                            <i class="fas fa-file-excel"></i>
-                        </a>
-                        <a href="/download-upload-zip?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
-                        class="btn btn-outline-primary btn-sm" title="Download ZIP">ZIP
-                            <i class="fas fa-file-archive"></i>
-                        </a>
-                    </div>
-                `;
+                // ✅ Ambil metadata dari cache JavaScript
+                const taskMetadata = taskMetadataCache[taskId];
+                if (taskMetadata) {
+                    const namaFile = taskMetadata.namaFileUpload || 'Unknown';
+                    const periode = taskMetadata.periodeData || '-';
+                    const uploadDate = taskMetadata.uploadDate || new Date().toISOString();
+                    
+                    // Update nama file di kolom pertama
+                    const row = downloadBtn.closest('tr');
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length >= 2) {
+                        cells[0].textContent = namaFile;
+                        cells[1].textContent = periode;
+                    }
+                    
+                    downloadBtn.outerHTML = `
+                        <div class="btn-group">
+                            <a href="/download-big-size?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
+                            class="btn btn-outline-success btn-sm" title="Download Excel">Excel
+                                <i class="fas fa-file-excel"></i>
+                            </a>
+                            <a href="/download_upload?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
+                            class="btn btn-outline-primary btn-sm" title="Download ZIP">ZIP
+                                <i class="fas fa-file-archive"></i>
+                            </a>
+                        </div>
+                    `;
+                } else {
+                    // ✅ Fallback jika metadata tidak tersedia
+                    console.warn(`No metadata found for task ${taskId}`);
+                    const row = downloadBtn.closest('tr');
+                    const cells = row.querySelectorAll('td');
+                    const namaFile = cells[0].textContent.trim();
+                    const periode = cells[1].textContent.trim();
+                    const uploadDate = cells[2].textContent.trim();
+                    
+                    downloadBtn.outerHTML = `
+                        <div class="btn-group">
+                            <a href="/download-big-size?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
+                            class="btn btn-outline-success btn-sm" title="Download Excel">Excel
+                                <i class="fas fa-file-excel"></i>
+                            </a>
+                            <a href="/download_upload?periodeData=${encodeURIComponent(periode)}&namaFileUpload=${encodeURIComponent(namaFile)}&uploadDate=${encodeURIComponent(uploadDate)}"
+                            class="btn btn-outline-primary btn-sm" title="Download ZIP">ZIP
+                                <i class="fas fa-file-archive"></i>
+                            </a>
+                        </div>
+                    `;
+                }
             }
         }
 
         // Poll for task status updates
-        if (taskIds.length > 0) {
-            console.log(`Starting status polling for ${taskIds.length} valid tasks`);
+        console.log("Tasks to poll:", filteredTaskIds);
+        if (!filteredTaskIds.includes(sessionTaskId)) {
+            console.warn(`Session task ${sessionTaskId} tidak ikut dipolling!`);
+        }
+
+        if (filteredTaskIds.length > 0) {
+            console.log(`Starting status polling for ${filteredTaskIds.length} tasks`);
             
             filteredTaskIds.forEach(taskId => {
-                if (!taskId || 
-                    taskId === 'None' || 
-                    taskId === 'null' || 
-                    taskId === 'undefined' ||
-                    taskId.trim() === '' ||
-                    completedTasks.has(taskId)) {
-                    console.log(`Skipping invalid or completed task: ${taskId}`);
+                if (completedTasks.has(taskId)) {
+                    console.log(`Skipping completed task: ${taskId}`);
                     return;
+                }
+
+                let progressBar = document.getElementById(`progress-bar-${taskId}`);
+                if (!progressBar) {
+                    console.log(`Creating new row for task: ${taskId}`);
+                    addNewRowToTable(taskId, 'Processing...', new Date().toLocaleString('id-ID'));
+                    progressBar = document.getElementById(`progress-bar-${taskId}`);
                 }
 
                 const interval = setInterval(() => {
@@ -565,29 +700,52 @@
                         .then(data => {
                             const progress = data.progress || 0;
                             const status = data.status || 'processing';
+                            
+                            // Simpan metadata dari response
+                            if (data.metadata) {
+                                taskMetadataCache[taskId] = data.metadata;
+                            }
 
                             console.log(`Polling task ${taskId}:`, data);
 
-                            const progressBar = document.getElementById(`progress-bar-${taskId}`);
-                            if (progressBar) {
-                                progressBar.style.width = `${progress}%`;
-                                progressBar.setAttribute('aria-valuenow', progress);
-                                progressBar.innerText = (status === 'error') ? 'Error' : `${progress}%`;
-                                progressBar.classList.toggle('progress-bar-animated', progress < 100 && status !== 'error');
-                                progressBar.classList.toggle('bg-danger', status === 'error');
+                            // Update progress bar
+                            const currentProgressBar = document.getElementById(`progress-bar-${taskId}`);
+                            if (currentProgressBar) {
+                                currentProgressBar.style.width = `${progress}%`;
+                                currentProgressBar.setAttribute('aria-valuenow', progress);
+                                currentProgressBar.innerText = (status === 'error') ? 'Error' : `${progress}%`;
+                                currentProgressBar.classList.toggle('progress-bar-animated', progress < 100 && status !== 'error');
+                                currentProgressBar.classList.toggle('bg-danger', status === 'error');
                             }
 
                             if (status === 'completed') {
                                 clearInterval(interval);
-                                handleTaskSuccess(taskId);
-                                handleTaskCompletion(taskId);
+                                // ✅ PERBAIKAN: Cek jika ini adalah validation error yang berhasil diproses
+                                if (data.error_type === 'validation_error') {
+                                    // Jangan tampilkan sebagai success, langsung remove row
+                                    removeTaskRow(taskId);
+                                    handleTaskCompletion(taskId, true, data.message || 'File validation error');
+                                } else {
+                                    handleTaskSuccess(taskId);
+                                    handleTaskCompletion(taskId);
+                                }
                             } else if (status === 'error') {
                                 clearInterval(interval);
                                 const errorMessage = data.message || 'Terjadi error saat memproses file';
                                 const errorType = data.error_type || 'general_error';
 
                                 console.log("Polling error terdeteksi:", errorType, errorMessage);
-                                handleTaskError(taskId, errorMessage, errorType);
+                                
+                                // ✅ PERBAIKAN: Simpan error info sebelum remove row
+                                errorList[taskId] = { message: errorMessage, type: errorType };
+                                
+                                // ✅ PERBAIKAN: Remove row untuk validation error
+                                if (errorType === 'validation_error') {
+                                    removeTaskRow(taskId);
+                                } else {
+                                    handleTaskError(taskId, errorMessage, errorType);
+                                }
+                                
                                 handleTaskCompletion(taskId, true, errorMessage);
                             }
                         })
@@ -597,13 +755,12 @@
                             const errorMessage = "Gagal mengambil status task";
                             handleTaskError(taskId, errorMessage, "system_error");
                             handleTaskCompletion(taskId, true, errorMessage);
-                            showErrorNotificationModal(errorMessage);
                         });
-                }, 3000); // polling setiap 3 detik
+                }, 3000);
             });
 
         } else {
-            console.log("No valid tasks found, skipping status polling");
+            console.log("No tasks to poll");
         }
 
         const hasValidUncompletedTasks = taskIds.some(id => {
@@ -620,4 +777,3 @@
 <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 
 {% endblock %}
-
