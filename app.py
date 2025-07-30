@@ -73,6 +73,27 @@ served_final_status = {}
 conn = get_db_connection()
 cur = conn.cursor()
 
+def try_parse_upload_date(uploadDate):
+    # Coba format "29 July 2025, 16:26"
+    try:
+        return datetime.strptime(uploadDate, "%d %B %Y, %H:%M")
+    except ValueError:
+        pass
+
+    # Coba format "2025-07-29 17:41:57"
+    try:
+        return datetime.strptime(uploadDate, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        pass
+
+    # Coba format dari JS new Date().toLocaleString('id-ID') => "29/7/2025, 17.29.35"
+    try:
+        return datetime.strptime(uploadDate, "%d/%m/%Y, %H.%M.%S")
+    except ValueError:
+        pass
+
+    raise ValueError(f"Format tanggal tidak dikenali: {uploadDate}")
+
 # Tambahkan helper function
 def is_allowed_file(filename, mimetype):
     return (
@@ -317,6 +338,8 @@ def process_files_worker():
                         # Parse periode data dari posisi
                         date_obj = datetime.strptime(posisi, "%Y%m")
                         periode_data = f"{bulan_dict[date_obj.month]} {date_obj.year}"
+                        if task_id in task_progress and 'temp_metadata' in task_progress[task_id]:
+                            task_progress[task_id]['temp_metadata']['periodeData'] = periode_data
 
                         file_processed = True
                         break
@@ -578,9 +601,21 @@ def list_uploads():
             conn.close()
 
 # --- Flask Routes untuk Download ---
-@app.route('/download_upload/<periodeData>/<username>/<namaFileUpload>/<uploadDate>')
-def download_upload_zip(periodeData, username, namaFileUpload, uploadDate):
+@app.route('/download_upload')
+def download_upload_zip():
     """Download semua file dalam satu upload session sebagai ZIP"""
+    periodeData = request.args.get('periodeData')
+    username = session.get('username')
+    namaFileUpload = request.args.get('namaFileUpload')
+    uploadDate = request.args.get('uploadDate')
+    
+    print({
+        'periodeData':periodeData,
+        'uploadDate':uploadDate,
+        'username':username,
+        'namaFileUpload':namaFileUpload
+    })
+
     downloadType = "File Upload TXT"
     downloadDate = datetime.now()
     
@@ -2719,10 +2754,13 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         header_format = workbook.add_format({'bold': True, 'border': 1})
         
         data_found = False
+        print(f"Periode: {periodeData} username: {username} and file: {namaFileUpload}")
         for table in tables:
             try:
-                query = f"SELECT * FROM {table} WHERE periodeData = ? AND username = ? AND namaFileUpload = ?"
-                print(f"Querying {table}...")
+                query = f"""
+                    SELECT * FROM {table}
+                    WHERE periodeData = ? AND username = ? AND namaFileUpload = ?
+                """
                 cur.execute(query, (periodeData, username, namaFileUpload))
 
                 columns = [column[0] for column in cur.description]
@@ -2939,7 +2977,7 @@ def upload_big_size_file():
                 'temp_metadata': {
                     'username': username,
                     'namaFileUpload': nama_file,
-                    'periodeData': flag,  # ✅ Gunakan flag sebagai periode sementara
+                    'periodeData': '-',
                     'uploadDate': current_datetime.strftime('%Y-%m-%d %H:%M:%S'),
                     'task_id': task_id,
                     'fullname': fullname
@@ -2968,24 +3006,23 @@ def upload_big_size_file():
             # flash(f'Error during upload: {e}', 'error')
             return redirect(url_for('upload_big_size_file'))
             
-@app.route('/download-big-size/<periodeData>/<username>/<namaFileUpload>/<uploadDate>', methods=['GET'])
-def download_big_size(periodeData, username, namaFileUpload, uploadDate):
+@app.route('/download-big-size', methods=['GET'])
+def download_big_size():
     try:
-        # URL decode parameters
-        periodeData = urllib.parse.unquote(periodeData)
-        username = urllib.parse.unquote(username)
-        namaFileUpload = urllib.parse.unquote(namaFileUpload)
+        periodeData = urllib.parse.unquote(request.args.get("periodeData", ""))
+        username = session.get('username')
+        namaFileUpload = urllib.parse.unquote(request.args.get("namaFileUpload", ""))
+        uploadDate = urllib.parse.unquote(request.args.get("uploadDate", ""))
         downloadType = "Output Excel"
         downloadDate = datetime.now()
-        uploadDate = urllib.parse.unquote(uploadDate)
-        
+
+        conn = None
+        cursor = None
+
         try:
-            # Konversi dari string "29 July 2025, 16:26" ke objek datetime
-            dt_obj = datetime.strptime(uploadDate, "%d %B %Y, %H:%M")
-            
-            # Ubah ke format SQL Server-friendly "YYYY-MM-DD HH:MM:SS"
+            dt_obj = try_parse_upload_date(uploadDate)
             uploadDate = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
-        
+
             conn = get_db_connection()
             cursor = conn.cursor()
 
@@ -2993,7 +3030,6 @@ def download_big_size(periodeData, username, namaFileUpload, uploadDate):
                 INSERT INTO slik_download_logging (periodeData, namaFileUpload, downloadType, username, downloadDate)
                 VALUES (?, ?, ?, ?, ?)
             """
-            
             cursor.execute(query, (periodeData, namaFileUpload, downloadType, username, downloadDate))
             conn.commit()
 
@@ -3001,16 +3037,12 @@ def download_big_size(periodeData, username, namaFileUpload, uploadDate):
             print(f"Error saving to DB: {e}")
             traceback.print_exc()
         finally:
-            cursor.close()
-            conn.close()
-        
-        # Log parameters for debugging
+            if cursor: cursor.close()
+            if conn: conn.close()
+
         print(f"Downloading Excel with parameters: {periodeData}, {username}, {namaFileUpload}, {uploadDate}")
-        
-        # Menyiapkan file Excel berdasarkan filter
         excel_file = export_to_excel(periodeData, username, namaFileUpload, uploadDate)
-        
-        # Mengirimkan file untuk diunduh
+
         return send_file(
             excel_file,
             as_attachment=True,
@@ -3019,8 +3051,9 @@ def download_big_size(periodeData, username, namaFileUpload, uploadDate):
         )
     except Exception as e:
         print(f"Error in download_excel: {str(e)}")
-        traceback.print_exc()  # Print full stack trace for debugging
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/handle-upload-error/<task_id>')
 def handle_upload_error(task_id):

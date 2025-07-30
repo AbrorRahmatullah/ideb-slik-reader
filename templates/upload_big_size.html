@@ -626,6 +626,11 @@
                     const namaFile = taskMetadata.namaFileUpload || 'Unknown';
                     const periode = taskMetadata.periodeData || '-';
                     const uploadDate = taskMetadata.uploadDate || new Date().toISOString();
+
+                    console.log("Valid taskMetadata:", taskMetadata);
+                    console.log("Valid Nama File found:", namaFile, " or Nama File Upload:", taskMetadata.namaFileUpload);
+                    console.log("Valid periode found:", periode," or taskMetadata.periodeData:", taskMetadata.periodeData);
+                    console.log("Valid uploadDate found:", uploadDate," or taskMetadata.uploadDate:", taskMetadata.uploadDate);
                     
                     // Update nama file di kolom pertama
                     const row = downloadBtn.closest('tr');
