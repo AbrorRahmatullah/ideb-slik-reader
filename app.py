@@ -1,3 +1,4 @@
+from math import log
 import os
 import re
 import time
@@ -62,7 +63,7 @@ ALLOWED_EXTENSIONS = {'.txt'}
 # Available flags
 FLAGS = ["Individual", "Perusahaan"]
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-MAX_FILE_BIG_SIZE = 200 * 1024 * 1024  # 10MB
+MAX_FILE_BIG_SIZE = 200 * 1024 * 1024  # 200MB
 UPLOAD_BASE_DIR = "uploads"
 
 # Create a global task queue and task results dictionary
@@ -389,26 +390,35 @@ def process_files_worker():
             
             # Validasi selesai, baru insert metadata 1x
             uploaded_at = datetime.now()
-
-            if not periode_data:
-                periode_data = "Periode Tidak Dikenal"
+            
+            if periode_data and task_id in task_progress:
+                # Update temp_metadata dengan data yang benar
+                task_progress[task_id]['temp_metadata'].update({
+                    'periodeData': periode_data,
+                    'uploadDate': uploaded_at.strftime('%d %B %Y, %H:%M'),
+                    'namaFileUpload': nama_file_upload,
+                    'username': user_info.get("username"),
+                    'fullname': user_info.get("fullname")
+                })
                 
-            save_file_metadata_to_db_flask(
-                periodeData=periode_data,
-                namaFileUpload=nama_file_upload,
-                uploadFolderPath=upload_folder_path,
-                username=user_info.get("username"),
-                fullname=user_info.get("fullname"),
-                roleAccess=user_info.get("role_access"),
-                uploadDate=uploaded_at
-            )
-
-            if task_id in task_progress:
+                # Update progress
                 task_progress[task_id]['progress'] = 10
+
+                
+                save_file_metadata_to_db_flask(
+                    periodeData=periode_data,
+                    namaFileUpload=nama_file_upload,
+                    uploadFolderPath=upload_folder_path,
+                    username=user_info.get("username"),
+                    fullname=user_info.get("fullname"),
+                    roleAccess=user_info.get("role_access"),
+                    uploadDate=uploaded_at
+                )
 
             result = process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at)
 
             if isinstance(result, dict) and result.get("error"):
+                # Handle error case
                 if task_id in task_progress:
                     task_progress[task_id]['status'] = 'error'
                     task_progress[task_id]['progress'] = 100
@@ -423,6 +433,7 @@ def process_files_worker():
                     "redirect_url": result.get("redirect_url", "/upload-big-size")
                 }
 
+                # Cleanup folder
                 try:
                     if os.path.exists(upload_folder_path):
                         shutil.rmtree(upload_folder_path)
@@ -432,13 +443,30 @@ def process_files_worker():
                 app.logger.error(f"[{task_id}] Gagal: {result.get('message')}")
 
             else:
+                # PERBAIKAN: Success case - pastikan metadata final tersimpan
                 result['upload_folder_path'] = upload_folder_path
                 task_results[task_id] = {"status": "completed", "result": result}
 
                 if task_id in task_progress:
-                    task_progress[task_id]['status'] = 'completed'
-                    task_progress[task_id]['progress'] = 100
-                    task_progress[task_id]['timestamp'] = time.time()
+                    # PERBAIKAN: Pastikan metadata final ada di response
+                    final_metadata = {
+                        'periodeData': periode_data,
+                        'username': user_info.get("username"),
+                        'namaFileUpload': nama_file_upload,
+                        'uploadDate': uploaded_at.strftime('%d %B %Y, %H:%M'),
+                        'fullname': user_info.get("fullname")
+                    }
+                    
+                    task_progress[task_id].update({
+                        'status': 'completed',
+                        'progress': 100,
+                        'timestamp': time.time(),
+                        'metadata': final_metadata  # PERBAIKAN: Tambahkan metadata final
+                    })
+                    
+                    # Update temp_metadata juga untuk konsistensi
+                    if 'temp_metadata' in task_progress[task_id]:
+                        task_progress[task_id]['temp_metadata'].update(final_metadata)
 
                 app.logger.info(f"[{task_id}] Selesai diproses.")
 
@@ -451,17 +479,19 @@ def process_files_worker():
                 "error_type": "system_error"
             }
             
-            task_progress[task_id].update({
-                'status': 'error',
-                'progress': 100,
-                'error_type': 'system_error',
-                'message': error_msg
-            })
+            if task_id in task_progress:
+                task_progress[task_id].update({
+                    'status': 'error',
+                    'progress': 100,
+                    'error_type': 'system_error',
+                    'message': error_msg,
+                    'timestamp': time.time()
+                })
             
             app.logger.error(f"[{task_id}] {error_msg}")
             
             try:
-                if os.path.exists(upload_folder_path):
+                if 'upload_folder_path' in locals() and os.path.exists(upload_folder_path):
                     shutil.rmtree(upload_folder_path)
             except Exception as cleanup_error:
                 app.logger.error(f"Error hapus folder: {cleanup_error}")
@@ -856,7 +886,7 @@ def insert_data(cursor, table_name, data_item, columns_to_remove=None, extra_col
             INSERT INTO {table_name} ({columns})
             VALUES ({placeholders})
         """
-
+        print(f"Executing query: {query} with values: {values}")
         cursor.execute(query, values)
 
     except Exception as e:
@@ -1174,7 +1204,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
 
     username = user_info['username']
     nama_file = user_info['nama_file']
-    current_datetime = datetime.now()
+    current_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     total_files = len(files)
     
     identitas = None
@@ -1287,15 +1317,14 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         if session_identitas is None:
                             # File pertama - simpan identitas sebagai referensi
                             session_identitas = identitas
-                        else:
+                        elif identitas != session_identitas:
                             # File kedua dan seterusnya - bandingkan dengan identitas file pertama
-                            if identitas != session_identitas:
-                                return {
-                                    "error": True,
-                                    "error_type": "validation_error",
-                                    "message": f"File yang diupload tidak konsisten. File pertama: {session_identitas}, File ke-{idx}: {identitas}. Pastikan semua file dalam satu sesi upload memiliki Nomor Identitas yang sama.",
-                                    "redirect_url": "/upload-big-size"
-                                }
+                            return {
+                                "error": True,
+                                "error_type": "validation_error",
+                                "message": f"File yang diupload tidak konsisten. File pertama: {session_identitas}, File ke-{idx}: {identitas}. Pastikan semua file dalam satu sesi upload memiliki Nomor Identitas yang sama.",
+                                "redirect_url": "/upload-big-size"
+                            }
                                 
                     date_obj = datetime.strptime(posisiDataTerakhir, "%Y%m")
                     json_posisiDataTerakhir = f"{bulan_dict[date_obj.month]} {date_obj.year}"
@@ -1322,8 +1351,10 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                                 INSERT INTO slik_header ({columns})
                                 VALUES ({placeholders})
                             """
+                            print(f"Executing query: {query} with values: {all_values}")
 
                             cur.execute(query, all_values)
+                            print(f"[slik_header] INSERT SUCCESS: {cur.rowcount} row(s)")
 
                         except Exception as e:
                             conn.rollback()  # Patch: rollback on error
@@ -1365,15 +1396,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         
                         # Insert data ke database dengan pengecekan yang konsisten
                         if json_individual:
-                            try:
-                                insert_data(cur, "slik_perusahaan", {
-                                    "nomorLaporan": json_individual.get("nomorLaporan"),
-                                    "posisiDataTerakhir": json_individual.get("posisiDataTerakhir"),
-                                    "tanggalPermintaan": json_individual.get("tanggalPermintaan")
-                                }, extra_columns=extra)
-                            except Exception as e:
-                                conn.rollback()  # Patch: rollback on error
-                                return {"error": f"Error processing file: {e}"}
+                            insert_data(cur, "slik_perusahaan", json_individual, columns_to_remove, extra_columns=extra)
 
                         if json_paramPencarian:
                             insert_data(cur, "slik_parameter_pencarian", json_paramPencarian, columns_to_remove, extra_columns=extra)
@@ -1658,7 +1681,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     print(f"Jumlah data setelah merge: {len(merged_fKP)}")
                 
                     # ACTIVE FACILITY (Kondisi == '00')
-                    active_fKP = merged_fKP[merged_fKP['kondisi'] == '00']
+                    active_fKP = merged_fKP[merged_fKP['kondisi'].isin(['00', '03', '13', '16'])]
                     print(f"Jumlah data fasilitas aktif: {len(active_fKP)}")
                 
                     if not active_fKP.empty:
@@ -1808,7 +1831,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         table_data_af_1 = "<p>Tidak ada data fasilitas aktif</p>"
 
                     # CLOSED FACILITY (Kondisi == '02')
-                    closed_fKP = merged_fKP[merged_fKP['kondisi'] == '02']
+                    closed_fKP = merged_fKP[merged_fKP['kondisi'].isin(['01', '02', '04', '05', '06', '07', '08', '09', '12', '17'])]
                     columns_closed = [
                         'namaDebitur', 'npwp', 'alamat', 'ljkKet',
                         'jenisKreditPembiayaanKet', 'jenisPenggunaanKet', 'plafon',
@@ -1988,7 +2011,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     merged_fLC = combined_data_7.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                     
                     # Proses fasilitas aktif
-                    active_fLC = merged_fLC[merged_fLC['kondisi'] == '00']
+                    active_fLC = merged_fLC[merged_fLC['kondisi'].isin(['00', '03', '13', '16'])]
                     table_data_af_2 = process_data(
                         active_fLC, 
                         'slik_fasilitas_aktif_lc', 
@@ -1996,7 +2019,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                     # Proses fasilitas lunas
-                    closed_fLC = merged_fLC[merged_fLC['kondisi'] == '02']
+                    closed_fLC = merged_fLC[merged_fLC['kondisi'].isin(['01', '02', '04', '05', '06', '07', '08', '09', '12', '17'])]
                     table_data_cf_2 = process_data(
                         closed_fLC, 
                         'slik_fasilitas_lunas_lc'
@@ -2126,7 +2149,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     merged_fGar = combined_data_8.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
                     
                     # Proses fasilitas aktif
-                    active_fGar = merged_fGar[merged_fGar['kodeKondisi'] == '00']
+                    active_fGar = merged_fGar[merged_fGar['kodeKondisi'].isin(['00', '03', '13', '16'])]
                     table_data_af_3 = process_guarantee_data(
                         active_fGar, 
                         'slik_fasilitas_aktif_bank_garansi',
@@ -2134,7 +2157,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                     # Proses fasilitas lunas
-                    closed_fGar = merged_fGar[merged_fGar['kodeKondisi'] == '02']
+                    closed_fGar = merged_fGar[merged_fGar['kodeKondisi'].isin(['01', '02', '04', '05', '06', '07', '08', '09', '12', '17'])]
                     table_data_cf_3 = process_guarantee_data(
                         closed_fGar, 
                         'slik_fasilitas_lunas_bank_garansi'
@@ -2279,7 +2302,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     print(merged_fLain)
                     
                     # Proses fasilitas aktif
-                    active_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '00']
+                    active_fLain = merged_fLain[merged_fLain['kodeKondisi'].isin(['00', '03', '13', '16'])]
                     table_data_af_4 = process_other_facility(
                         active_fLain, 
                         'slik_fasilitas_aktif_lainnya',
@@ -2287,7 +2310,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                     # Proses fasilitas lunas
-                    closed_fLain = merged_fLain[merged_fLain['kodeKondisi'] == '02']
+                    closed_fLain = merged_fLain[merged_fLain['kodeKondisi'].isin(['01', '02', '04', '05', '06', '07', '08', '09', '12', '17'])]
                     table_data_cf_4 = process_other_facility(
                         closed_fLain, 
                         'slik_fasilitas_lunas_lainnya'
@@ -2328,8 +2351,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     }
                     
                     # 3. Pemisahan data berdasarkan kondisi
-                    active_fSB = merged_fSB[merged_fSB['kondisi'] == '00']
-                    closed_fSB = merged_fSB[merged_fSB['kondisi'] == '02']
+                    active_fSB = merged_fSB[merged_fSB['kondisi'].isin(['00', '03', '13', '16'])]
+                    closed_fSB = merged_fSB[merged_fSB['kondisi'].isin(['01', '02', '04', '05', '06', '07', '08', '09', '12', '17'])]
                     
                     # 4. Map kode jenis surat berharga ke deskripsi
                     data_df = pd.DataFrame(jenis_surat_berharga)
@@ -2460,13 +2483,21 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
             
         # Update progress to 100% (completed)
         conn.commit()
-        task_progress[task_id]['progress'] = 100
-        task_progress[task_id]['status'] = 'completed'
+        if task_id in task_progress:
+            task_progress[task_id].update({
+                'progress': 100,
+                'status': 'completed',
+                'completed_at': datetime.now().isoformat(),
+                'message': 'Upload berhasil diproses'
+            })
         
-        # Store result
+        # PERBAIKAN: Store result dengan flag untuk stop polling
         task_results[task_id] = {
             "status": "success",
-            "data": list_table_data
+            "completed": True,
+            "redirect_url": "/upload-success",  # atau URL tujuan setelah selesai
+            "data": list_table_data,
+            "message": "File berhasil diproses"
         }
         
         # Log completion
@@ -2498,15 +2529,44 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
             "table_data_cf_5": table_data_cf_5,
         }
     except Exception as e:
-        conn.rollback()  # Patch: rollback on error
-        conn.rollback()  # Rollback kalau ada error
-        app.logger.error(f"[{task_id}] Error processing file: {str(e)}")
-        return {
+        # PERBAIKAN: Update task progress untuk error state
+        if task_id in task_progress:
+            task_progress[task_id].update({
+                'progress': 0,
+                'status': 'error',
+                'completed_at': datetime.now().isoformat(),
+                'error_message': str(e),
+                'message': f'Error processing file: {str(e)}'
+            })
+        
+        # PERBAIKAN: Store error result dengan flag untuk stop polling
+        task_results[task_id] = {
+            "status": "error",
+            "completed": True,
             "error": True,
             "error_type": "system_error",
             "message": f"Error processing file: {str(e)}",
             "redirect_url": "/upload-big-size"
         }
+        
+        # Rollback database changes
+        if conn:
+            conn.rollback()
+        
+        # Log error
+        app.logger.error(f"[{task_id}] Error processing file: {str(e)}")
+        
+        # Return error response
+        return {
+            "error": True,
+            "error_type": "system_error", 
+            "message": f"Error processing file: {str(e)}",
+            "redirect_url": "/upload-big-size"
+        }
+    finally:
+        # PERBAIKAN: Pastikan connection ditutup
+        if conn:
+            conn.close()
 
 # Daftar tabel yang akan diekspor
 tables = [
@@ -2547,10 +2607,20 @@ def get_data_for_display():
             item = dict(zip(columns, row))
             try:
                 dt = parser.parse(str(item.get("uploadDate")))
+                item["uploadDate_raw"] = dt.strftime('%Y-%m-%d %H:%M:%S.%f')
                 item["uploadDate"] = dt.strftime('%d %B %Y, %H:%M')
             except Exception as e:
                 print(f"Gagal parse uploadDate: {item.get('uploadDate')}, error: {e}")
-                item["uploadDate"] = str(item.get("uploadDate"))
+                item["uploadDate_raw"] = str(item.get("uploadDate") or "")
+                item["uploadDate"] = str(item.get("uploadDate") or "")
+
+            # 🔹 Pastikan semua kolom lain string
+            for key in ["periodeData", "namaFileUpload", "uploadFolderPath", "username", "fullname", "roleAccess"]:
+                if key in item and item[key] is not None:
+                    item[key] = str(item[key])
+                else:
+                    item[key] = ""
+
             data.append(item)
 
     except Exception as e:
@@ -2561,78 +2631,204 @@ def get_data_for_display():
 
     return data
 
+# Perbaikan untuk fungsi get_progress_status
 @app.route('/progress-status/<task_id>')
 def get_progress_status(task_id):
-    global served_final_status
-    """Get progress percentage for a task"""
+    try:
+        # Helper function untuk memastikan data adalah string
+        def ensure_string_value(value, fallback=''):
+            """Pastikan value adalah string yang valid untuk JSON"""
+            if value is None:
+                return fallback
+            
+            if hasattr(value, 'strftime'):  # datetime object
+                try:
+                    return value.strftime('%d %B %Y, %H:%M')
+                except:
+                    return str(value)
+            
+            if isinstance(value, (dict, list, tuple, set)):
+                try:
+                    return str(value)  # Convert complex objects to string
+                except:
+                    return fallback
+            
+            if hasattr(value, '__str__'):
+                try:
+                    str_value = str(value)
+                    # Pastikan tidak ada karakter yang bermasalah
+                    return str_value.strip()
+                except:
+                    return fallback
+            
+            return fallback
 
-    # Jika task_id kosong atau "null", anggap sudah selesai
-    if task_id == "null" or not task_id:
-        return jsonify({'progress': 100, 'status': 'completed'})
+        def sanitize_metadata(metadata_dict):
+            """Sanitasi metadata untuk memastikan semua value adalah string"""
+            if not metadata_dict or not isinstance(metadata_dict, dict):
+                return {}
+            
+            sanitized = {}
+            for key, value in metadata_dict.items():
+                # Pastikan key juga string
+                safe_key = str(key) if key is not None else 'unknown'
+                # Pastikan value adalah string
+                safe_value = ensure_string_value(value)
+                sanitized[safe_key] = safe_value
+                
+            return sanitized
 
-    # ✅ Jika task sudah selesai (baik error atau success)
-    if task_id in task_results:
-        result = task_results[task_id]
-        status = result.get('status')
+        # Cek di task_progress dulu
+        if task_id in task_progress:
+            progress_data = task_progress[task_id].copy()
 
-        if status == 'error':
-            error_type = result.get('error_type', 'general_error')
+            # ====== AMBIL METADATA ======
+            metadata = None
+            
+            if 'temp_metadata' in progress_data:
+                metadata = sanitize_metadata(progress_data['temp_metadata'])
+            else:
+                try:
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    query = """
+                        SELECT TOP 1 periodeData, username, namaFileUpload, uploadDate, fullname
+                        FROM slik_header 
+                        WHERE username = ? AND namaFileUpload = ?
+                        ORDER BY uploadDate DESC
+                    """
+                    if 'key' in progress_data:
+                        key_parts = progress_data['key'].split('_')
+                        if len(key_parts) >= 2:
+                            username = key_parts[0]
+                            nama_file = key_parts[1]
+                            cursor.execute(query, (username, nama_file))
+                            result = cursor.fetchone()
+                            if result:
+                                raw_metadata = {
+                                    'periodeData': result[0],
+                                    'username': result[1],
+                                    'namaFileUpload': result[2],
+                                    'uploadDate': result[3],
+                                    'fullname': result[4] if len(result) > 4 else None
+                                }
+                                # Sanitasi metadata dari database
+                                metadata = sanitize_metadata(raw_metadata)
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    print(f"Error getting metadata from DB: {e}")
+                    metadata = {}
 
-            # Jangan set served_final_status untuk validation_error
-            if error_type != 'validation_error':
-                served_final_status[task_id] = True
-
-            response_data = {
-                'progress': 100,
-                'status': 'error',
-                'message': result.get('message', 'Unknown error'),
-                'error_type': error_type,
-                'is_final': error_type != 'validation_error'
+            # ====== FORMAT RESPONSE ======
+            response = {
+                'progress': int(progress_data.get('progress', 0)),  # Pastikan integer
+                'status': str(progress_data.get('status', 'processing')),  # Pastikan string
+                'timestamp': float(progress_data.get('timestamp', time.time()))  # Pastikan float
             }
 
-            # Tambahkan metadata jika ada
-            metadata = task_progress.get(task_id, {}).get('temp_metadata')
+            # ====== FORMAT BARU: progress terpisah per bar ======
+            if 'progress_bars' in progress_data and isinstance(progress_data['progress_bars'], dict):
+                # Pastikan semua value dalam progress_bars adalah integer
+                sanitized_progress_bars = {}
+                for bar_key, bar_value in progress_data['progress_bars'].items():
+                    try:
+                        sanitized_progress_bars[str(bar_key)] = int(bar_value)
+                    except:
+                        sanitized_progress_bars[str(bar_key)] = 0
+                response['progress_bars'] = sanitized_progress_bars
+            else:
+                main_progress = int(progress_data.get('progress', 0))
+                response['progress_bars'] = {
+                    'bar1': main_progress,
+                    'bar2': main_progress
+                }
+
+            # ====== STATUS COMPLETED ======
+            if progress_data.get('status') == 'completed':
+                response.update({
+                    'completed': True,
+                    'should_redirect': True,
+                    'redirect_url': '/upload-success',
+                    'message': ensure_string_value(progress_data.get('message', 'Upload berhasil diproses')),
+                    'final_message': 'Upload berhasil diproses'
+                })
+
+            # ====== STATUS ERROR ======
+            elif progress_data.get('status') == 'error':
+                error_message = ensure_string_value(progress_data.get('message', 'Unknown error'))
+                response.update({
+                    'completed': True,
+                    'should_redirect': True,
+                    'redirect_url': '/upload-big-size',
+                    'error': True,
+                    'message': error_message,
+                    'error_message': ensure_string_value(progress_data.get('error_message', error_message)),
+                    'error_type': ensure_string_value(progress_data.get('error_type', 'general_error'))
+                })
+
+            # ====== TAMBAHKAN METADATA ======
             if metadata:
-                response_data['metadata'] = metadata
+                # Double-check sanitasi metadata sebelum menambahkan ke response
+                validated_metadata = sanitize_metadata(metadata)
+                response['metadata'] = validated_metadata
+                print(f"Final sanitized metadata for task {task_id}:", validated_metadata)
 
-            return jsonify(response_data)
+            return jsonify(response)
 
-        elif status == 'completed':
-            if not served_final_status.get(task_id):
-                served_final_status[task_id] = True
-            return jsonify({'progress': 100, 'status': 'completed'})
+        elif task_id in task_results:
+            result = task_results[task_id]
+            base_response = {
+                'progress': 100,
+                'progress_bars': {'bar1': 100, 'bar2': 100},
+                'timestamp': float(time.time())
+            }
+            
+            if result.get('status') == 'success':
+                base_response.update({
+                    'status': 'completed',
+                    'completed': True,
+                    'should_redirect': True,
+                    'redirect_url': ensure_string_value(result.get('redirect_url', '/upload-success')),
+                    'message': ensure_string_value(result.get('message', 'Upload berhasil diproses')),
+                    'final_message': 'Upload berhasil diproses'
+                })
+            else:
+                error_msg = ensure_string_value(result.get('message', 'Task failed'))
+                base_response.update({
+                    'status': 'error',
+                    'completed': True,
+                    'should_redirect': True,
+                    'redirect_url': ensure_string_value(result.get('redirect_url', '/upload-big-size')),
+                    'error': True,
+                    'message': error_msg,
+                    'error_message': error_msg,
+                    'error_type': ensure_string_value(result.get('error_type', 'general_error'))
+                })
+            
+            return jsonify(base_response)
 
-    # ✅ Jika task masih dalam proses
-    progress_info = task_progress.get(task_id)
-    if progress_info:
-        progress_value = progress_info.get('progress', 0)
-        status = progress_info.get('status', 'processing').lower()
-
-        response_data = {
-            'progress': progress_value,
-            'status': status
-        }
-
-        if status == 'error':
-            response_data.update({
-                'message': progress_info.get('message', 'Processing error occurred'),
-                'error_type': progress_info.get('error_type', 'general_error'),
-                'is_final': progress_info.get('error_type') != 'validation_error'
-            })
-
-        # Tambahkan metadata jika ada
-        metadata = progress_info.get('temp_metadata')
-        if metadata:
-            response_data['metadata'] = metadata
-
-        return jsonify(response_data)
-
-    # ✅ Jika task tidak ditemukan tapi belum pernah diserve final status
-    if not served_final_status.get(task_id):
-        served_final_status[task_id] = True
-
-    return jsonify({'progress': 100, 'status': 'completed'})
-
+        else:
+            return jsonify({
+                'progress': 0,
+                'progress_bars': {'bar1': 0, 'bar2': 0},
+                'status': 'not_found',
+                'message': 'Task not found',
+                'timestamp': float(time.time())
+            }), 404
+    except Exception as e:
+        print(f"Error in get_progress_status: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        
+        return jsonify({
+            'progress': 0,
+            'progress_bars': {'bar1': 0, 'bar2': 0},
+            'status': 'error',
+            'message': 'Server error',
+            'timestamp': float(time.time())
+        }), 500
+        
 # Fungsi untuk mengekspor data tabel ke Excel (versi sederhana)
 def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         
