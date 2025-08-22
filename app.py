@@ -1308,6 +1308,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                                 "redirect_url": "/upload-big-size"
                             }
                     elif 'individual' in data and isinstance(data['individual'], dict) and data['individual'].get('posisiDataTerakhir'):
+                        print(f"Processing individual data for file {idx}")
                         data_individual = data['individual']
                         posisiDataTerakhir = data_individual['posisiDataTerakhir']
                         json_paramPencarian = data_individual.get('parameterPencarian', {})
@@ -1345,6 +1346,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             # Buat string kolom dan placeholders
                             columns = ', '.join(all_columns)
                             placeholders = ', '.join(['?'] * len(all_columns))
+                            
+                            print(f"Preparing to insert data into slik_header: {all_columns} with values: {all_values}")
 
                             # Query insert akhir
                             query = f"""
@@ -1357,7 +1360,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             print(f"[slik_header] INSERT SUCCESS: {cur.rowcount} row(s)")
 
                         except Exception as e:
-                            conn.rollback()  # Patch: rollback on error
                             print(f"Error inserting data: {e}")
                             traceback.print_exc()
                             print(f"Item: {json_header}")
@@ -1620,8 +1622,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         session['data_available'] = True
                     
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
-                    # task_progress[task_id]['status'] = 'error'
                     app.logger.error(f"[{task_id}] Error processing file {filename}: {str(e)}")
                     return {
                         "error": True,
@@ -1794,8 +1794,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             else:
                                 print("Tidak ada data summary untuk di-insert!")
                         except Exception as e:
-        
-                            conn.rollback()
                             print(f"Error saat insert data summary: {str(e)}")
                         
                         # Insert ke tabel fasilitas aktif
@@ -1814,8 +1812,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             else:
                                 print("Data fasilitas aktif kosong!")
                         except Exception as e:
-        
-                            conn.rollback()
                             print(f"Error saat insert data aktif: {str(e)}")
 
                         # Persiapkan data untuk tabel HTML
@@ -1907,7 +1903,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     closed_facility_1 = closed_facility_1.drop(columns=['periodeData', 'username', 'namaFileUpload', 'uploadDate'], errors='ignore')
                     table_data_cf_1 = closed_facility_1.to_html(classes="table table-striped", index=False)
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
                     table_data_af_1 = f"Error processing active facilities: {e}"
                     table_data_cf_1 = f"Error processing closed facilities: {e}"
         
@@ -2026,7 +2021,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
                     table_data_af_2 = f"Error processing active facilities: {e}"
                     table_data_cf_2 = f"Error processing closed facilities: {e}"
                     
@@ -2164,7 +2158,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
                     table_data_af_3 = f"Error processing active facilities: {e}"
                     table_data_cf_3 = f"Error processing closed facilities: {e}"
                     
@@ -2317,7 +2310,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
                     table_data_af_4 = f"Error processing active facilities: {e}"
                     table_data_cf_4 = f"Error processing closed facilities: {e}"
                 
@@ -2477,7 +2469,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     )
                     
                 except Exception as e:
-                    conn.rollback()  # Patch: rollback on error
                     table_data_af_5 = f"Error processing active facilities: {e}"
                     table_data_cf_5 = f"Error processing closed facilities: {e}"
             
