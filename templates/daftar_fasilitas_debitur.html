@@ -1,0 +1,187 @@
+{% extends "header.html" %}
+{% block title %}Daftar Fasilitas Debitur{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Daftar Fasilitas Debitur SLIK
+    </div>
+
+    <div class="card-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+            <div>
+                <label for="periodeFilter" class="form-label">Periode:</label>
+                <input type="month" id="periodeFilter" class="form-control" style="width: 200px; display: inline-block;">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button id="btnFilter" class="btn-primary" style="width: auto; padding: 8px 15px;">
+                    <i class="fas fa-search"></i> Tampilkan
+                </button>
+                <button id="btnDownload" class="btn-success" style="width: auto; padding: 8px 15px;" disabled>
+                    <i class="fas fa-file-excel"></i> Download Excel
+                </button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="fasilitasTable" class="table table-striped table-bordered nowrap w-100">
+                <thead>
+                    <tr>
+                        <th>Periode Data</th>
+                        <th>ID Debitur / NPWP</th>
+                        <th>Nama Debitur</th>
+                        <th>Jenis Kredit / Pembiayaan</th>
+                        <th>Akad Kredit / Pembiayaan</th>
+                        <th>Pelapor</th>
+                        <th>Baki Debet</th>
+                        <th>Kolektibilitas</th>
+                        <th>Jumlah Hari Tunggakan</th>
+                        <th>Sebab Macet</th>
+                        <th>Tanggal Macet</th>
+                        <th>Frekuensi Tunggakan</th>
+                        <th>Denda Biaya</th>
+                        <th>Frekuensi Restrukturisasi</th>
+                        <th>Tanggal Restrukturisasi Terakhir</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let fasilitasTable;
+let lastData = [];
+
+// --- INIT DATATABLE ---
+function initTable() {
+    fasilitasTable = $('#fasilitasTable').DataTable({
+        serverSide: true,
+        processing: true,
+        ajax: function(data, callback) {
+            const page = Math.floor(data.start / data.length) + 1;
+            const page_size = data.length;
+            const periodeInput = document.getElementById("periodeFilter").value;
+            const periode = periodeInput ? periodeInput.replace("-", "") : "";
+
+            fetch(`/api/data-fasilitas-debitur?periode=${periode}&page=${page}&page_size=${page_size}`)
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        callback({
+                            recordsTotal: result.total,
+                            recordsFiltered: result.total,
+                            data: result.data
+                        });
+                        lastData = result.data;
+                        $('#btnDownload').prop('disabled', result.data.length === 0);
+                    } else {
+                        callback({ data: [] });
+                    }
+                })
+                .catch(() => callback({ data: [] }));
+        },
+        pageLength: 10,
+        scrollX: true,
+        language: { processing: "Memuat data...", search: "Cari:" },
+        columns: [
+            { data: 'Periode Data' },
+            { data: 'ID Debitur/ NPWP' },
+            { data: 'Nama Debitur' },
+            { data: 'Jenis Kredit / Pembiayaan' },
+            { data: 'Akad Kredit / Pembiayaan' },
+            { data: 'Pelapor' },
+            { data: 'Baki Debet', className: 'text-end' },
+            { data: 'Kolektibilitas' },
+            { data: 'Jumlah Hari Tunggakan', className: 'text-center' },
+            { data: 'Sebab Macet' },
+            { data: 'Tanggal Macet', className: 'text-center' },
+            { data: 'Frekuensi Tunggakan', className: 'text-center' },
+            { data: 'Denda Biaya', className: 'text-end' },
+            { data: 'Frekuensi Restrukturisasi', className: 'text-center' },
+            { data: 'Tanggal Restrukturisasi Terakhir', className: 'text-center' }
+        ]
+    });
+}
+
+// --- FETCH DATA ---
+async function loadData(periode = "") {
+    $('#btnFilter').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Loading...');
+    $('#btnDownload').prop('disabled', true);
+
+    try {
+        const response = await fetch(`/api/data-fasilitas-debitur?periode=${periode}`);
+        const result = await response.json();
+
+        if (result.success) {
+            lastData = result.data || [];
+            fasilitasTable.clear().rows.add(lastData).draw();
+            $('#btnDownload').prop('disabled', lastData.length === 0);
+        } else {
+            alert("Gagal memuat data: " + result.message);
+        }
+    } catch (err) {
+        console.error(err);
+        alert("Terjadi kesalahan saat mengambil data.");
+    } finally {
+        $('#btnFilter').prop('disabled', false).html('<i class="fas fa-search"></i> Tampilkan');
+    }
+}
+
+// --- DOWNLOAD EXCEL ---
+async function downloadExcel() {
+    if (!lastData.length) {
+        alert("Tidak ada data untuk diunduh.");
+        return;
+    }
+
+    $('#btnDownload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengunduh...');
+    
+    try {
+        const response = await fetch('/api/download-data-fasilitas-debitur', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: lastData })
+        });
+
+        if (!response.ok) throw new Error("Gagal mengunduh file");
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fasilitas_debitur_${new Date().toISOString().slice(0,10)}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error(err);
+        alert("Terjadi kesalahan saat mengunduh file.");
+    } finally {
+        $('#btnDownload').prop('disabled', false).html('<i class="fas fa-file-excel"></i> Download Excel');
+    }
+}
+
+// --- ON PAGE LOAD ---
+document.addEventListener('DOMContentLoaded', () => {
+    initTable();
+
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    document.getElementById("periodeFilter").value = currentMonth;
+    const periodeDefault = currentMonth.replace("-", "");
+
+    loadData(periodeDefault);
+
+    document.getElementById('btnFilter').addEventListener('click', () => {
+        const periodeInput = document.getElementById("periodeFilter").value;
+        const periode = periodeInput ? periodeInput.replace("-", "") : "";
+        loadData(periode);
+    });
+
+    document.getElementById('btnDownload').addEventListener('click', downloadExcel);
+});
+</script>
+{% endblock %}

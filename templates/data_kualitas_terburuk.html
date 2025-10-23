@@ -1,0 +1,150 @@
+{% extends "header.html" %}
+{% block title %}Data Kualitas Terburuk{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Data Kualitas Terburuk Debitur
+    </div>
+
+    <div class="card-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+            <div>
+                <label for="periodeFilter" class="form-label">Periode:</label>
+                <input type="month" id="periodeFilter" class="form-control" style="width: 200px; display: inline-block;">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button id="btnFilter" class="btn-primary" style="width: auto; padding: 8px 15px;">
+                    <i class="fas fa-search"></i> Tampilkan
+                </button>
+                <button id="btnDownload" class="btn-success" style="width: auto; padding: 8px 15px;" disabled>
+                    <i class="fas fa-file-excel"></i> Download Excel
+                </button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="kualitasTable" class="table table-striped table-bordered nowrap w-100">
+                <thead>
+                    <tr>
+                        <th>Periode Data</th>
+                        <th>Nama Debitur</th>
+                        <th>ID Debitur NPWP</th>
+                        <th>Kualitas Terburuk</th>
+                        <th>Kualitas Bulan Data Terburuk</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let kualitasTable;
+let lastPeriode = "";
+let lastDataCount = 0;
+
+// --- INIT DATATABLE ---
+function initTable() {
+    kualitasTable = $('#kualitasTable').DataTable({
+        serverSide: true,
+        processing: true,
+        ajax: function(data, callback) {
+            const page = Math.floor(data.start / data.length) + 1;
+            const page_size = data.length;
+            const periodeInput = document.getElementById("periodeFilter").value;
+            const periode = periodeInput ? periodeInput.replace("-", "") : "";
+
+            fetch(`/api/data-kualitas-terburuk?periode=${periode}&page=${page}&page_size=${page_size}`)
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        callback({
+                            recordsTotal: result.total,
+                            recordsFiltered: result.total,
+                            data: result.data
+                        });
+                        lastDataCount = result.data.length;
+                        lastPeriode = periode;
+                        $('#btnDownload').prop('disabled', result.data.length === 0);
+                    } else {
+                        callback({ data: [] });
+                        $('#btnDownload').prop('disabled', true);
+                    }
+                })
+                .catch(() => {
+                    callback({ data: [] });
+                    $('#btnDownload').prop('disabled', true);
+                });
+        },
+        pageLength: 10,
+        scrollX: true,
+        language: { processing: "Memuat data...", search: "Cari:" },
+        columns: [
+            { data: 'Periode Data', className: 'text-center' },
+            { data: 'Nama Debitur' },
+            { data: 'ID Debitur NPWP', className: 'text-center' },
+            { data: 'Kualitas Terburuk', className: 'text-center' },
+            { data: 'Kualitas Bulan Data Terburuk', className: 'text-center' }
+        ]
+    });
+}
+
+// --- FILTER ---
+function applyFilter() {
+    const periodeInput = document.getElementById("periodeFilter").value;
+    const periode = periodeInput ? periodeInput.replace("-", "") : "";
+    lastPeriode = periode;
+    kualitasTable.ajax.reload();
+}
+
+// --- DOWNLOAD EXCEL ---
+async function downloadExcel() {
+    if (lastDataCount === 0) {
+        alert("Tidak ada data untuk diunduh.");
+        return;
+    }
+
+    $('#btnDownload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengunduh...');
+
+    try {
+        const response = await fetch('/api/download-data-kualitas-terburuk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ periode: lastPeriode })
+        });
+
+        if (!response.ok) throw new Error("Gagal mengunduh file");
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `data_kualitas_terburuk_${lastPeriode || 'all'}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error(err);
+        alert("Terjadi kesalahan saat mengunduh file.");
+    } finally {
+        $('#btnDownload').prop('disabled', false).html('<i class="fas fa-file-excel"></i> Download Excel');
+    }
+}
+
+// --- INIT PAGE ---
+document.addEventListener('DOMContentLoaded', () => {
+    initTable();
+
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    document.getElementById("periodeFilter").value = currentMonth;
+    lastPeriode = currentMonth.replace("-", "");
+
+    document.getElementById('btnFilter').addEventListener('click', applyFilter);
+    document.getElementById('btnDownload').addEventListener('click', downloadExcel);
+});
+</script>
+{% endblock %}
