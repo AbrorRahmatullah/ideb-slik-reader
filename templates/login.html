@@ -1,32 +1,133 @@
-{% extends "header.html" %}
-
-{% block title %}Login{% endblock %}
-
-{% block content %}
-<div class="login-card">
-    <h1>Login</h1>
-    <form action="/" method="POST">
-        <div class="mb-3">
-            <label for="username" class="form-label">Username</label>
-            <input type="text" name="username" class="form-control" required placeholder="Enter your username">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - iDeb SLIK Reader Report</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .login-card {
+            background: white;
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            width: 100%;
+            max-width: 450px;
+            margin: auto;
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .login-header h1 {
+            color: #1e3a8a;
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        
+        .login-header p {
+            color: #6b7280;
+            font-size: 0.95rem;
+        }
+        
+        .form-label {
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-control {
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        
+        .form-control:focus {
+            border-color: #1e3a8a;
+            box-shadow: 0 0 0 0.2rem rgba(30, 58, 138, 0.25);
+        }
+        
+        .btn-primary {
+            width: 100%;
+            background: #1e3a8a;
+            border: none;
+            padding: 0.875rem;
+            border-radius: 8px;
+            font-size: 1.125rem;
+            font-weight: 600;
+            transition: background 0.3s, transform 0.2s;
+        }
+        
+        .btn-primary:hover {
+            background: #1a2e63;
+            transform: translateY(-1px);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+        
+        .error-message {
+            background-color: #fee;
+            color: #dc3545;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1.5rem;
+            border-left: 4px solid #dc3545;
+            font-size: 0.9rem;
+        }
+        
+        .error-message p {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <h1>iDeb SLIK Reader</h1>
+            <p>Sign in to your account</p>
         </div>
-        <div class="mb-3">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" name="password" class="form-control" required placeholder="Enter your password">
-        </div>
-        <button type="submit" class="btn btn-primary">Login</button>
-    </form>
+        
+        <form action="/" method="POST">
+            <div class="mb-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" name="username" class="form-control" required placeholder="Enter your username" autofocus>
+            </div>
+            <div class="mb-3">
+                <label for="password" class="form-label">Password</label>
+                <input type="password" name="password" class="form-control" required placeholder="Enter your password">
+            </div>
+            <button type="submit" class="btn btn-primary">Login</button>
+        </form>
 
-    {% with messages = get_flashed_messages() %}
-    {% if messages %}
-    <div class="error-message">
-        {% for message in messages %}
-        <p>{{ message }}</p>
-        {% endfor %}
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="error-message">
+            {% for message in messages %}
+            <p>{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
     </div>
-    {% endif %}
-    {% endwith %}
-</div>
 
-<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
-{% endblock %}
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+</body>
+</html>

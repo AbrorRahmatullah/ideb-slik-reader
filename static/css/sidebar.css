@@ -1,0 +1,380 @@
+/* Sidebar Layout Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #f4f7fc;
+    font-family: 'Arial', sans-serif;
+    overflow-x: hidden;
+}
+
+/* Top Header */
+.top-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 70px;
+    background: #1e3a8a;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.sidebar-toggle {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 6px;
+    transition: background 0.3s;
+}
+
+.sidebar-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.header-title {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+}
+
+/* User Dropdown */
+.user-dropdown {
+    position: relative;
+}
+
+.user-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+    transition: background 0.3s;
+}
+
+.user-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.user-btn i.fa-user-circle {
+    font-size: 1.5rem;
+}
+
+.user-btn i.fa-chevron-down {
+    font-size: 0.8rem;
+    transition: transform 0.3s;
+}
+
+.user-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    background: white;
+    min-width: 220px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.3s;
+    z-index: 1001;
+}
+
+.user-dropdown-menu.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    color: #333;
+    text-decoration: none;
+    transition: background 0.2s;
+    font-size: 0.95rem;
+}
+
+.dropdown-item:hover {
+    background: #f4f7fc;
+}
+
+.dropdown-item.text-danger {
+    color: #dc3545;
+}
+
+.dropdown-item.text-danger:hover {
+    background: #fee;
+}
+
+.dropdown-divider {
+    height: 1px;
+    background: #e0e0e0;
+    margin: 8px 0;
+}
+
+/* Sidebar */
+.sidebar {
+    position: fixed;
+    top: 70px;
+    left: 0;
+    width: 260px;
+    height: calc(100vh - 70px);
+    background: white;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    overflow-y: auto;
+    transition: all 0.3s ease;
+    z-index: 999;
+}
+
+.sidebar.collapsed {
+    width: 70px;
+}
+
+.sidebar-header {
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #e0e0e0;
+    color: #1e3a8a;
+    font-weight: bold;
+}
+
+.sidebar-header i {
+    font-size: 1.5rem;
+    min-width: 30px;
+    text-align: center;
+}
+
+.sidebar.collapsed .sidebar-header .sidebar-title {
+    display: none;
+}
+
+/* Sidebar Menu */
+.sidebar-menu {
+    list-style: none;
+    padding: 10px 0;
+}
+
+.menu-section {
+    padding: 20px 20px 10px;
+    opacity: 1;
+    transition: opacity 0.3s;
+}
+
+.sidebar.collapsed .menu-section {
+    opacity: 0;
+    height: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.section-title {
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.menu-item {
+    margin: 4px 10px;
+}
+
+.menu-item.active .menu-link {
+    background: #1e3a8a;
+    color: white;
+}
+
+.menu-link {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 12px 15px;
+    color: #333;
+    text-decoration: none;
+    border-radius: 8px;
+    transition: all 0.2s;
+    font-size: 0.95rem;
+}
+
+.menu-link:hover {
+    background: #f4f7fc;
+    color: #1e3a8a;
+}
+
+.menu-item.active .menu-link:hover {
+    background: #1a2e63;
+    color: white;
+}
+
+.menu-link i {
+    font-size: 1.2rem;
+    min-width: 25px;
+    text-align: center;
+}
+
+.sidebar.collapsed .menu-link span {
+    display: none;
+}
+
+.sidebar.collapsed .menu-link {
+    justify-content: center;
+    padding: 12px;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 15px;
+    border-top: 1px solid #e0e0e0;
+    background: white;
+}
+
+.version-info {
+    text-align: center;
+    color: #999;
+    font-size: 0.8rem;
+}
+
+.sidebar.collapsed .version-info {
+    display: none;
+}
+
+/* Main Content */
+.main-content {
+    margin-top: 70px;
+    margin-left: 260px;
+    padding: 30px;
+    min-height: calc(100vh - 70px);
+    transition: all 0.3s ease;
+}
+
+.main-content.expanded {
+    margin-left: 70px;
+}
+
+.content-wrapper {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* Scrollbar Styling */
+.sidebar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 3px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+    background: #999;
+}
+
+/* Responsive Design */
+@media (max-width: 992px) {
+    .header-title {
+        font-size: 1.2rem;
+    }
+    
+    .sidebar {
+        width: 70px;
+    }
+    
+    .sidebar.collapsed {
+        width: 0;
+        overflow: hidden;
+    }
+    
+    .main-content {
+        margin-left: 70px;
+    }
+    
+    .main-content.expanded {
+        margin-left: 0;
+    }
+}
+
+@media (max-width: 768px) {
+    .header-title {
+        display: none;
+    }
+    
+    .user-btn span {
+        display: none;
+    }
+    
+    .sidebar {
+        width: 0;
+        overflow: hidden;
+    }
+    
+    .sidebar.collapsed {
+        width: 260px;
+    }
+    
+    .main-content {
+        margin-left: 0;
+    }
+    
+    .main-content.expanded {
+        margin-left: 0;
+    }
+}
+
+/* Card Adjustments for Sidebar Layout */
+.card {
+    margin-top: 0;
+    max-width: 100%;
+}
+
+/* Override body padding from original styles.css */
+body {
+    padding: 0;
+}
+
+/* Ensure tables are responsive within sidebar layout */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}

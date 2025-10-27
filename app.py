@@ -719,6 +719,10 @@ def download_upload_zip():
 # Register route
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    get_role_access = session.get('role_access')
+    get_fullname = session.get('fullname')
+    get_username = session.get('username')
+    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -765,7 +769,12 @@ def register():
             '''.format(url_for('login'))
 
 
-    return render_template('register.html')
+    return render_template(
+        'register.html',
+        role_access=get_role_access,
+        fullname=get_fullname,
+        username=get_username
+    )
 
 # Login Route
 @app.route('/', methods=['GET', 'POST'])
@@ -803,6 +812,10 @@ def change_password():
     if 'username' not in session:
         flash("You need to log in first.")
         return redirect(url_for('login'))
+
+    get_role_access = session.get('role_access')
+    get_fullname = session.get('fullname')
+    get_username = session.get('username')
 
     if request.method == 'POST':
         current_password = request.form['current_password']
@@ -853,7 +866,12 @@ def change_password():
         cur.close()
         conn.close()
 
-    return render_template('change_password.html')
+    return render_template(
+        'change_password.html',
+        role_access=get_role_access,
+        fullname=get_fullname,
+        username=get_username
+    )
 
 # Logout Route
 @app.route('/logout')
@@ -2526,7 +2544,6 @@ def get_data_for_display():
 @app.route('/progress-status/<task_id>')
 def get_progress_status(task_id):
     try:
-        # Helper function untuk memastikan data adalah string
         def ensure_string_value(value, fallback=''):
             """Pastikan value adalah string yang valid untuk JSON"""
             if value is None:
@@ -2540,14 +2557,13 @@ def get_progress_status(task_id):
             
             if isinstance(value, (dict, list, tuple, set)):
                 try:
-                    return str(value)  # Convert complex objects to string
+                    return str(value)
                 except:
                     return fallback
             
             if hasattr(value, '__str__'):
                 try:
                     str_value = str(value)
-                    # Pastikan tidak ada karakter yang bermasalah
                     return str_value.strip()
                 except:
                     return fallback
@@ -2561,9 +2577,7 @@ def get_progress_status(task_id):
             
             sanitized = {}
             for key, value in metadata_dict.items():
-                # Pastikan key juga string
                 safe_key = str(key) if key is not None else 'unknown'
-                # Pastikan value adalah string
                 safe_value = ensure_string_value(value)
                 sanitized[safe_key] = safe_value
                 
@@ -2603,7 +2617,6 @@ def get_progress_status(task_id):
                                     'uploadDate': result[3],
                                     'fullname': result[4] if len(result) > 4 else None
                                 }
-                                # Sanitasi metadata dari database
                                 metadata = sanitize_metadata(raw_metadata)
                     cursor.close()
                     conn.close()
@@ -2612,15 +2625,17 @@ def get_progress_status(task_id):
                     metadata = {}
 
             # ====== FORMAT RESPONSE ======
+            # PERBAIKAN: Normalize status ke lowercase
+            raw_status = str(progress_data.get('status', 'processing')).lower()
+            
             response = {
-                'progress': int(progress_data.get('progress', 0)),  # Pastikan integer
-                'status': str(progress_data.get('status', 'processing')),  # Pastikan string
-                'timestamp': float(progress_data.get('timestamp', time.time()))  # Pastikan float
+                'progress': int(progress_data.get('progress', 0)),
+                'status': raw_status,  # 'processing', 'completed', atau 'error'
+                'timestamp': float(progress_data.get('timestamp', time.time()))
             }
 
-            # ====== FORMAT BARU: progress terpisah per bar ======
+            # ====== PROGRESS BARS ======
             if 'progress_bars' in progress_data and isinstance(progress_data['progress_bars'], dict):
-                # Pastikan semua value dalam progress_bars adalah integer
                 sanitized_progress_bars = {}
                 for bar_key, bar_value in progress_data['progress_bars'].items():
                     try:
@@ -2636,37 +2651,41 @@ def get_progress_status(task_id):
                 }
 
             # ====== STATUS COMPLETED ======
-            if progress_data.get('status') == 'completed':
+            if raw_status == 'completed':
                 response.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-success',
                     'message': ensure_string_value(progress_data.get('message', 'Upload berhasil diproses')),
-                    'final_message': 'Upload berhasil diproses'
+                    'final_message': 'Upload berhasil diproses',
+                    'error': False  # Explicitly set error to false
                 })
 
             # ====== STATUS ERROR ======
-            elif progress_data.get('status') == 'error':
+            elif raw_status == 'error':
                 error_message = ensure_string_value(progress_data.get('message', 'Unknown error'))
+                error_type = ensure_string_value(progress_data.get('error_type', 'general_error'))
+                
                 response.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-big-size',
                     'error': True,
                     'message': error_message,
-                    'error_message': ensure_string_value(progress_data.get('error_message', error_message)),
-                    'error_type': ensure_string_value(progress_data.get('error_type', 'general_error'))
+                    'error_message': error_message,
+                    'error_type': error_type
                 })
 
             # ====== TAMBAHKAN METADATA ======
             if metadata:
-                # Double-check sanitasi metadata sebelum menambahkan ke response
-                validated_metadata = sanitize_metadata(metadata)
-                response['metadata'] = validated_metadata
-                print(f"Final sanitized metadata for task {task_id}:", validated_metadata)
+                response['metadata'] = metadata
+                print(f"✅ Metadata added for task {task_id}:", metadata)
+            else:
+                print(f"⚠️ No metadata available for task {task_id}")
 
             return jsonify(response)
 
+        # ====== CEK DI TASK_RESULTS ======
         elif task_id in task_results:
             result = task_results[task_id]
             base_response = {
@@ -2682,7 +2701,8 @@ def get_progress_status(task_id):
                     'should_redirect': True,
                     'redirect_url': ensure_string_value(result.get('redirect_url', '/upload-success')),
                     'message': ensure_string_value(result.get('message', 'Upload berhasil diproses')),
-                    'final_message': 'Upload berhasil diproses'
+                    'final_message': 'Upload berhasil diproses',
+                    'error': False
                 })
             else:
                 error_msg = ensure_string_value(result.get('message', 'Task failed'))
@@ -2699,16 +2719,19 @@ def get_progress_status(task_id):
             
             return jsonify(base_response)
 
+        # ====== TASK NOT FOUND ======
         else:
             return jsonify({
                 'progress': 0,
                 'progress_bars': {'bar1': 0, 'bar2': 0},
                 'status': 'not_found',
                 'message': 'Task not found',
-                'timestamp': float(time.time())
+                'timestamp': float(time.time()),
+                'error': True
             }), 404
+            
     except Exception as e:
-        print(f"Error in get_progress_status: {e}")
+        print(f"❌ Error in get_progress_status: {e}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         
@@ -2717,9 +2740,10 @@ def get_progress_status(task_id):
             'progress_bars': {'bar1': 0, 'bar2': 0},
             'status': 'error',
             'message': 'Server error',
+            'error': True,
             'timestamp': float(time.time())
         }), 500
-        
+
 # Fungsi untuk mengekspor data tabel ke Excel (versi sederhana)
 def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         
@@ -2974,7 +2998,7 @@ def upload_big_size_file():
             'upload_big_size.html',
             show_alert=show_alert,
             show_processing_alert=show_processing_alert,
-            data=all_data,
+            # data=all_data,
             flags=FLAGS,
             role_access=role_access,
             fullname=fullname,
@@ -3092,7 +3116,181 @@ def upload_big_size_file():
             print(f"Error during upload: {e}")
             # flash(f'Error during upload: {e}', 'error')
             return redirect(url_for('upload_big_size_file'))
+
+@app.route('/api/upload-data')
+def api_upload_data():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get pagination parameters
+        draw = int(request.args.get('draw', 1))
+        start = int(request.args.get('start', 0))
+        length = int(request.args.get('length', 10))
+        search_value = request.args.get('search[value]', '')
+        
+        # Order parameters
+        order_column_index = int(request.args.get('order[0][column]', 2))
+        order_direction = request.args.get('order[0][dir]', 'desc')
+        
+        # Map column index to database column
+        column_map = {
+            0: 'namaFileUpload',
+            1: 'periodeData',
+            2: 'uploadDate'
+        }
+        order_column = column_map.get(order_column_index, 'uploadDate')
+        
+        # ✅ PERBAIKAN: Query tanpa task_id
+        base_query = """
+            SELECT periodeData, namaFileUpload, uploadFolderPath, username, 
+                   fullname, uploadDate
+            FROM slik_uploader
+        """
+        
+        # Add search filter if exists
+        where_clause = ""
+        params = []
+        if search_value:
+            where_clause = """ WHERE 
+                namaFileUpload LIKE ? OR 
+                periodeData LIKE ? OR 
+                username LIKE ? OR 
+                fullname LIKE ?
+            """
+            search_param = f'%{search_value}%'
+            params = [search_param, search_param, search_param, search_param]
+        
+        # Get total count
+        count_query = f"SELECT COUNT(*) FROM slik_uploader {where_clause}"
+        cursor.execute(count_query, params)
+        total_records = cursor.fetchone()[0]
+        
+        # Get filtered data with pagination (SQL Server syntax)
+        query = f"""
+            {base_query}
+            {where_clause}
+            ORDER BY {order_column} {order_direction.upper()}
+            OFFSET ? ROWS
+            FETCH NEXT ? ROWS ONLY
+        """
+        params_query = params.copy()
+        params_query.extend([start, length])
+        
+        cursor.execute(query, params_query)
+        rows = cursor.fetchall()
+        columns = [col[0] for col in cursor.description]
+        
+        data = []
+        for row in rows:
+            item = dict(zip(columns, row))
             
+            # Format upload date
+            try:
+                upload_date_obj = parser.parse(str(item.get("uploadDate")))
+                upload_date = upload_date_obj.strftime("%d %B %Y, %H:%M")
+                upload_date_raw = item.get("uploadDate")
+            except:
+                upload_date = "N/A"
+                upload_date_raw = ""
+            
+            # ✅ PERBAIKAN: Cek task progress berdasarkan key pattern
+            # Cari task_id yang match dengan username dan namaFileUpload
+            progress = 100
+            status = 'completed'
+            
+            search_key = f"{item.get('username')}_{item.get('namaFileUpload')}"
+            for tid, task_data in task_progress.items():
+                if task_data.get('key', '').startswith(search_key):
+                    progress = task_data.get('progress', 0)
+                    status = task_data.get('status', 'processing')
+                    break
+            
+            # Build progress bar HTML
+            if status == 'error':
+                progress_html = f"""
+                <div class="progress" style="height:18px;">
+                    <div class="progress-bar bg-danger" role="progressbar" style="width: 100%;">
+                        Error
+                    </div>
+                </div>
+                """
+            else:
+                animated_class = 'progress-bar-animated' if progress < 100 else ''
+                progress_html = f"""
+                <div class="progress" style="height:18px;">
+                    <div class="progress-bar progress-bar-striped {animated_class}" 
+                         role="progressbar" style="width: {progress}%;">
+                        {progress}%
+                    </div>
+                </div>
+                """
+            
+            # Build download buttons HTML
+            if progress == 100 and status != 'error':
+                download_html = f"""
+                <div class="btn-group">
+                    <a href="{url_for('download_big_size', 
+                                      periodeData=item['periodeData'], 
+                                      username=item['username'], 
+                                      namaFileUpload=item['namaFileUpload'], 
+                                      uploadDate=str(upload_date_raw))}" 
+                       class="btn btn-outline-success btn-sm" title="Download Excel">
+                        Excel <i class="fas fa-file-excel"></i>
+                    </a>
+                    <a href="{url_for('download_upload_zip', 
+                                      periodeData=item['periodeData'], 
+                                      username=item['username'], 
+                                      namaFileUpload=item['namaFileUpload'], 
+                                      uploadDate=str(upload_date_raw))}" 
+                       class="btn btn-outline-primary btn-sm" title="Download ZIP">
+                        ZIP <i class="fas fa-file-archive"></i>
+                    </a>
+                </div>
+                """
+            elif status == 'error':
+                download_html = """
+                <button class="btn btn-danger btn-sm" disabled>
+                    <i class="fas fa-exclamation-triangle"></i> Error
+                </button>
+                """
+            else:
+                download_html = """
+                <button class="btn btn-secondary btn-sm" disabled>
+                    <i class="fas fa-spinner fa-spin"></i> Processing
+                </button>
+                """
+            
+            data.append([
+                item['namaFileUpload'],
+                item['periodeData'],
+                upload_date,
+                progress_html,
+                download_html
+            ])
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            "draw": draw,
+            "recordsTotal": total_records,
+            "recordsFiltered": total_records,
+            "data": data
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in api_upload_data: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            "draw": int(request.args.get('draw', 1)),
+            "recordsTotal": 0,
+            "recordsFiltered": 0,
+            "data": [],
+            "error": str(e)
+        }), 500
+
 @app.route('/download-big-size', methods=['GET'])
 def download_big_size():
     try:

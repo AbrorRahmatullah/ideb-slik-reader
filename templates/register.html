@@ -3,97 +3,98 @@
 {% block title %}Register User{% endblock %}
 
 {% block content %}
-<div class="register-card">
-    <h1>Register</h1>
-    <form method="POST" class="needs-validation" novalidate onsubmit="return validatePassword(event)">
-        <div class="mb-3">
-            <label for="username" class="form-label">Username</label>
-            <input type="text" name="username" id="username" class="form-control" required placeholder="Enter your username" value="{{ username if username else '' }}">
-            <div class="invalid-feedback">Please enter your username.</div>
-        </div>
-        
-        <div class="mb-3">
-            <label for="fullname" class="form-label">Fullname</label>
-            <input type="text" name="fullname" id="fullname" class="form-control" required placeholder="Enter your fullname" value="{{ fullname if fullname else '' }}">
-            <div class="invalid-feedback">Please enter your fullname.</div>
-        </div>
-        
-        <div class="mb-3">
-            <label for="email" class="form-label">Email</label>
-            <input type="email" name="email" id="email" class="form-control" required placeholder="Enter your email" value="{{ email if email else '' }}">
-            <div class="invalid-feedback">Please enter a valid email address.</div>
-        </div>
-        
-        <div class="mb-3">
-            <label for="password" class="form-label">Password</label>
-            <div class="position-relative">
-                <input type="password" name="password" id="password" class="form-control password-input" required placeholder="Enter your password" oninput="checkPasswordStrength()">
-                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"></i>
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Register New User</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" class="needs-validation" novalidate onsubmit="return validatePassword(event)">
+            <div class="mb-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" name="username" id="username" class="form-control" required placeholder="Enter username" value="{{ username if username else '' }}">
+                <div class="invalid-feedback">Please enter username.</div>
             </div>
-            <div class="password-requirements">
-                <p id="lengthCheck">❌ Minimal panjang 9 digit</p>
-                <p id="capitalCheck">❌ Mengandung huruf kapital</p>
-                <p id="numberCheck">❌ Mengandung angka</p>
-                <p id="specialCheck">❌ Mengandung karakter spesial</p>
+            
+            <div class="mb-3">
+                <label for="fullname" class="form-label">Fullname</label>
+                <input type="text" name="fullname" id="fullname" class="form-control" required placeholder="Enter fullname" value="{{ fullname if fullname else '' }}">
+                <div class="invalid-feedback">Please enter fullname.</div>
             </div>
-            <div class="invalid-feedback" id="password_error">Password tidak memenuhi syarat.</div>
-        </div>
-        
-        <div class="mb-3">
-            <label for="password_confirm" class="form-label">Re-enter Password</label>
-            <div class="position-relative">
-                <input type="password" name="password_confirm" id="password_confirm" class="form-control password-input" required placeholder="Re-enter your password">
-                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"></i>
+            
+            <div class="mb-3">
+                <label for="email" class="form-label">Email</label>
+                <input type="email" name="email" id="email" class="form-control" required placeholder="Enter email address" value="{{ email if email else '' }}">
+                <div class="invalid-feedback">Please enter a valid email address.</div>
             </div>
-            <div class="invalid-feedback" id="confirm_password_error">Passwords do not match.</div>
-        </div>
+            
+            <div class="mb-3">
+                <label for="password" class="form-label">Password</label>
+                <div class="position-relative">
+                    <input type="password" name="password" id="password" class="form-control password-input" required placeholder="Enter password" oninput="checkPasswordStrength()">
+                    <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"></i>
+                </div>
+                <div class="password-requirements">
+                    <p id="lengthCheck">❌ Minimal panjang 9 digit</p>
+                    <p id="capitalCheck">❌ Mengandung huruf kapital</p>
+                    <p id="numberCheck">❌ Mengandung angka</p>
+                    <p id="specialCheck">❌ Mengandung karakter spesial</p>
+                </div>
+                <div class="invalid-feedback" id="password_error">Password tidak memenuhi syarat.</div>
+            </div>
+            
+            <div class="mb-3">
+                <label for="password_confirm" class="form-label">Re-enter Password</label>
+                <div class="position-relative">
+                    <input type="password" name="password_confirm" id="password_confirm" class="form-control password-input" required placeholder="Re-enter password">
+                    <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"></i>
+                </div>
+                <div class="invalid-feedback" id="confirm_password_error">Passwords do not match.</div>
+            </div>
 
-        <div class="mb-3">
-            <label for="role_access" class="form-label">Role Access</label>
-            <select name="role_access" id="role_access" class="form-control" required>
-                <option value="user" {% if request.form.get('role_access') == 'user' %}selected{% endif %}>User</option>
-                <option value="admin" {% if request.form.get('role_access') == 'admin' %}selected{% endif %}>Admin</option>
-            </select>
-            <div class="invalid-feedback">Please select a role.</div>
-        </div>
+            <div class="mb-3">
+                <label for="role_access" class="form-label">Role Access</label>
+                <select name="role_access" id="role_access" class="form-control" required>
+                    <option value="user" {% if request.form.get('role_access') == 'user' %}selected{% endif %}>User</option>
+                    <option value="admin" {% if request.form.get('role_access') == 'admin' %}selected{% endif %}>Admin</option>
+                </select>
+                <div class="invalid-feedback">Please select a role.</div>
+            </div>
 
-        <button type="submit" class="btn btn-primary w-100">Register</button>
-        <a href="/upload" class="btn btn-danger w-100 mt-2">Back</a>
-    </form>
+            <div class="d-grid gap-2">
+                <button type="submit" class="btn btn-primary">Register</button>
+                <a href="/upload-big-size" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
 
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}
-        <div class="alert alert-danger mt-3">
-            {% for message in messages %}
-                <p>{{ message }}</p>
-            {% endfor %}
-        </div>
-        {% endif %}
-    {% endwith %}
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+            <div class="alert alert-danger mt-3">
+                {% for message in messages %}
+                    <p class="mb-0">{{ message }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+        {% endwith %}
+    </div>
 </div>
 
 <link rel="stylesheet" href="static/bootstrap-icons.css">
-<script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 <script>
-    // Ambil elemen input email
+    // Email validation
     const emailInput = document.getElementById('email');
 
-    // Fungsi untuk validasi email
     function validateEmail() {
         const email = emailInput.value;
         const emailPattern = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/;
 
         if (!emailPattern.test(email)) {
-            emailInput.classList.add('is-invalid'); // Tambahkan class is-invalid
+            emailInput.classList.add('is-invalid');
         } else {
-            emailInput.classList.remove('is-invalid'); // Hapus class is-invalid
+            emailInput.classList.remove('is-invalid');
         }
     }
 
-    // Tambahkan event listener untuk memvalidasi email saat pengguna mengetik
     emailInput.addEventListener('input', validateEmail);
-
-    // Tambahkan event listener untuk memvalidasi email saat field kehilangan fokus
     emailInput.addEventListener('blur', validateEmail);
 
     function togglePassword(inputId, icon) {

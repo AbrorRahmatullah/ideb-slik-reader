@@ -3,44 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}iDeb SLIK Reader Report{% endblock %}</title>
+    <title>{% block title %}iDeb SLIK Reader Report{% endblock %}</title>
     <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/styles.css') }}" rel="stylesheet">
-    <!-- jQuery (Wajib sebelum DataTables) -->
+    <link href="{{ url_for('static', filename='css/sidebar.css') }}" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- jQuery (Required before DataTables) -->
     <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
 
     <!-- DataTables -->
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
-    <!-- Toastr CSS -->
+    
+    <!-- Toastr -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
-
-    <!-- Toastr JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
-
 </head>
 <body>
-    <div class="header">
-        <h2>iDeb SLIK Reader Report</h2>
-        <div class="nav-links">
-            <a href="/daftar-fasilitas-debitur">Daftar Fasilitas Debitur SLIK OJK</a>
-            <a href="/data-kualitas-terburuk">Data Kualitas Terburuk per Periode</a>
-            <a href="/data-debitur-aktif">Data NPWP Debitur Aktif per Periode</a>
+    <!-- Top Header -->
+    <div class="top-header">
+        <div class="header-left">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-bars"></i>
+            </button>
+            <h2 class="header-title">iDeb SLIK Reader Report</h2>
         </div>
-        <div class="dropdown">
-            <span id="fullname">{{ fullname }}</span>
-            <div class="dropdown-content">
-                <a href="/change_password">Change Password</a>
-                {% if role_access == 'admin' %}
-                    <a href="/register">Register User</a>
-                {% endif %}
-                <a href="/logout">Logout</a>
+        <div class="header-right">
+            <div class="user-dropdown">
+                <button class="user-btn" id="userDropdownBtn">
+                    <i class="fas fa-user-circle"></i>
+                    <span id="fullname">{{ fullname }}</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-dropdown-menu" id="userDropdownMenu">
+                    <a href="/change_password" class="dropdown-item">
+                        <i class="fas fa-key"></i> Change Password
+                    </a>
+                    {% if role_access == 'admin' %}
+                    <a href="/register" class="dropdown-item">
+                        <i class="fas fa-user-plus"></i> Register User
+                    </a>
+                    {% endif %}
+                    <div class="dropdown-divider"></div>
+                    <a href="/logout" class="dropdown-item text-danger">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </a>
+                </div>
             </div>
         </div>
     </div>
 
-    {% block content %}{% endblock %}
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <i class="fas fa-database"></i>
+            <span class="sidebar-title">Menu</span>
+        </div>
+        
+        <ul class="sidebar-menu">
+            <!-- <li class="menu-item">
+                <a href="/dashboard" class="menu-link">
+                    <i class="fas fa-home"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li> -->
+            
+            <li class="menu-item">
+                <a href="/upload-big-size" class="menu-link">
+                    <i class="fas fa-upload"></i>
+                    <span>Upload Files</span>
+                </a>
+            </li>
+            
+            <li class="menu-section">
+                <span class="section-title">SLIK Reports</span>
+            </li>
+            
+            <li class="menu-item">
+                <a href="/daftar-fasilitas-debitur" class="menu-link">
+                    <i class="fas fa-list-alt"></i>
+                    <span>Daftar Fasilitas Debitur</span>
+                </a>
+            </li>
+            
+            <li class="menu-item">
+                <a href="/data-kualitas-terburuk" class="menu-link">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Data Kualitas Terburuk</span>
+                </a>
+            </li>
+            
+            <li class="menu-item">
+                <a href="/data-debitur-aktif" class="menu-link">
+                    <i class="fas fa-users"></i>
+                    <span>Data Debitur Aktif</span>
+                </a>
+            </li>
+            
+            <!-- {% if role_access == 'admin' %}
+            <li class="menu-section">
+                <span class="section-title">Admin</span>
+            </li>
+            
+            <li class="menu-item">
+                <a href="/user-management" class="menu-link">
+                    <i class="fas fa-users-cog"></i>
+                    <span>User Management</span>
+                </a>
+            </li>
+            {% endif %} -->
+        </ul>
+        
+        <div class="sidebar-footer">
+            <div class="version-info">
+                <small>Version 1.0.0</small>
+            </div>
+        </div>
+    </nav>
 
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+        <div class="content-wrapper">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Sidebar Toggle Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            const userDropdownBtn = document.getElementById('userDropdownBtn');
+            const userDropdownMenu = document.getElementById('userDropdownMenu');
+            
+            // Load sidebar state from localStorage
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (sidebarCollapsed) {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('expanded');
+            }
+            
+            // Toggle sidebar
+            sidebarToggle.addEventListener('click', function() {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('expanded');
+                
+                // Save state to localStorage
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                localStorage.setItem('sidebarCollapsed', isCollapsed);
+            });
+            
+            // User dropdown toggle
+            userDropdownBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                userDropdownMenu.classList.toggle('show');
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!userDropdownBtn.contains(e.target) && !userDropdownMenu.contains(e.target)) {
+                    userDropdownMenu.classList.remove('show');
+                }
+            });
+            
+            // Highlight active menu item based on current URL
+            const currentPath = window.location.pathname;
+            const menuLinks = document.querySelectorAll('.menu-link');
+            
+            menuLinks.forEach(link => {
+                if (link.getAttribute('href') === currentPath) {
+                    link.closest('.menu-item').classList.add('active');
+                }
+            });
+        });
+    </script>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 </body>
 </html>
