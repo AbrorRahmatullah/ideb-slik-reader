@@ -65,39 +65,36 @@
         </div>
         
         <ul class="sidebar-menu">
-            <!-- <li class="menu-item">
-                <a href="/dashboard" class="menu-link">
-                    <i class="fas fa-home"></i>
-                    <span>Dashboard</span>
-                </a>
-            </li> -->
-            
+            {% if report_access in [0, 2] %}
+            <!-- Upload Files selalu muncul untuk akses 0 dan 2 -->
             <li class="menu-item">
                 <a href="/upload-big-size" class="menu-link">
                     <i class="fas fa-upload"></i>
                     <span>Upload Files</span>
                 </a>
             </li>
-            
-            {% if report_access == 1 %}
+            {% endif %}
+
+            {% if report_access in [1, 2] %}
+            <!-- Menu laporan muncul untuk akses 1 dan 2 -->
             <li class="menu-section">
                 <span class="section-title">SLIK Reports</span>
             </li>
-            
+
             <li class="menu-item">
                 <a href="/daftar-fasilitas-debitur" class="menu-link">
                     <i class="fas fa-list-alt"></i>
                     <span>Daftar Fasilitas Debitur</span>
                 </a>
             </li>
-            
+
             <li class="menu-item">
                 <a href="/data-kualitas-terburuk" class="menu-link">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>Data Kualitas Terburuk</span>
                 </a>
             </li>
-            
+
             <li class="menu-item">
                 <a href="/data-debitur-aktif" class="menu-link">
                     <i class="fas fa-users"></i>
@@ -105,19 +102,6 @@
                 </a>
             </li>
             {% endif %}
-            
-            <!-- {% if role_access == 'admin' %}
-            <li class="menu-section">
-                <span class="section-title">Admin</span>
-            </li>
-            
-            <li class="menu-item">
-                <a href="/user-management" class="menu-link">
-                    <i class="fas fa-users-cog"></i>
-                    <span>User Management</span>
-                </a>
-            </li>
-            {% endif %} -->
         </ul>
         
         <div class="sidebar-footer">
