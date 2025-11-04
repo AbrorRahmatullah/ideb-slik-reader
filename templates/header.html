@@ -79,6 +79,7 @@
                 </a>
             </li>
             
+            {% if report_access == 1 %}
             <li class="menu-section">
                 <span class="section-title">SLIK Reports</span>
             </li>
@@ -103,6 +104,7 @@
                     <span>Data Debitur Aktif</span>
                 </a>
             </li>
+            {% endif %}
             
             <!-- {% if role_access == 'admin' %}
             <li class="menu-section">

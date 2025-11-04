@@ -2,6 +2,7 @@ import numbers
 import os
 import re
 import time
+from arrow import get
 import numpy as np
 import openpyxl
 from openpyxl.styles import Border, Side, numbers
@@ -17,7 +18,7 @@ import shutil
 import zipfile
 import logging
 
-from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
+from flask import Flask, abort, g, request, render_template, redirect, url_for, flash, session, jsonify, send_file, has_request_context
 from flask_bcrypt import Bcrypt
 from datetime import datetime, timedelta
 from werkzeug.datastructures import FileStorage
@@ -722,6 +723,7 @@ def register():
     get_role_access = session.get('role_access')
     get_fullname = session.get('fullname')
     get_username = session.get('username')
+    get_report_access = session.get('report_access')
     
     if request.method == 'POST':
         username = request.form['username']
@@ -730,6 +732,7 @@ def register():
         role_access = request.form['role_access']
         fullname = request.form['fullname']
         email = request.form['email']
+        report_access = request.form['report_access']
         
         required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email']
         data = {field: request.form[field] for field in required_fields}
@@ -759,7 +762,10 @@ def register():
 
         else:
             # Insert new user into the database
-            cur.execute("INSERT INTO users (username, password_hash, role_access, fullname, email, created_date) VALUES (?, ?, ?, ?, ?, GETDATE())", (username, password_hash, role_access, fullname, email))
+            cur.execute("""
+                INSERT INTO users (username, password_hash, role_access, fullname, email, report_access, created_date)
+                VALUES (?, ?, ?, ?, ?, ?, GETDATE())
+            """, (username, password_hash, role_access, fullname, email, report_access))
             conn.commit()
             return '''
                 <script>
@@ -773,7 +779,8 @@ def register():
         'register.html',
         role_access=get_role_access,
         fullname=get_fullname,
-        username=get_username
+        username=get_username,
+        report_access=get_report_access
     )
 
 # Login Route
@@ -781,7 +788,7 @@ def register():
 def login():
     if request.method == 'GET':
         session['data_available'] = False
-        
+
     elif request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -790,17 +797,23 @@ def login():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # Fetch the hashed password from the database for the given username
-        cur.execute("SELECT password_hash, role_access, fullname FROM users WHERE username = ?", (username,))
+        cur.execute("SELECT password_hash, role_access, fullname, report_access FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
 
         if user and bcrypt.check_password_hash(user[0], password):
             fullname = user[2]
+            role_access = user[1]
+            report_access = user[3]
+
             session.permanent = True
             session['username'] = username
             session['fullname'] = fullname
-            session['role_access'] = user[1]
+            session['role_access'] = role_access
+            session['report_access'] = report_access
             session['upload_done'] = True
+            
+            print(report_access)
+
             return redirect(url_for('upload_big_size_file'))
         else:
             flash("Invalid username or password.")
@@ -2351,10 +2364,10 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     if table_name == 'slik_fasilitas_aktif_surat_berharga':
                         output_data.insert(1, 'Nomor Laporan', nomor_laporan, allow_duplicates=False)
                         
-                    return facility_data, output_data.to_html(classes="table table-striped", index=False)
+                    return facility_data
                 
                 # 7. Proses data untuk active facilities
-                active_facility_5 = process_facility_data(
+                active_facility_5 = process_facility_data( 
                     active_fSB, 
                     columns_with_valuta, 
                     'slik_fasilitas_aktif_surat_berharga'
@@ -2870,9 +2883,9 @@ def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
             try:
                 query = f"""
                     SELECT * FROM {table}
-                    WHERE periodeData = ? AND username = ? AND namaFileUpload = ?
+                    WHERE periodeData = ? AND namaFileUpload = ?
                 """
-                cur.execute(query, (periodeData, username, namaFileUpload))
+                cur.execute(query, (periodeData, namaFileUpload))
 
                 columns = [column[0] for column in cur.description]
                 rows = cur.fetchall()
@@ -2952,6 +2965,7 @@ def upload_big_size_file():
     role_access = session.get('role_access')
     fullname = session.get('fullname')
     username = session.get('username')
+    report_access = session.get('report_access')
 
     if request.method == 'GET':
         show_alert = session.pop('upload_done', False)
@@ -3002,6 +3016,7 @@ def upload_big_size_file():
             flags=FLAGS,
             role_access=role_access,
             fullname=fullname,
+            report_access=report_access,
             task_progress=current_task_progress,
             task_id=task_id
         )
@@ -3394,7 +3409,8 @@ def daftar_fasilitas_debitur_page():
         'daftar_fasilitas_debitur.html',
         username=session.get('username'),
         fullname=session.get('fullname'),
-        role_access=session.get('role_access')
+        role_access=session.get('role_access'),
+        report_access=session.get('report_access')
     )
             
 @app.route('/api/data-fasilitas-debitur', methods=['GET'])
@@ -3510,39 +3526,63 @@ def api_fasilitas_debitur_page():
         cursor.close()
         conn.close()        
 
-@app.route('/api/download-data-fasilitas-debitur', methods=['POST'])
+@app.route('/api/download-data-fasilitas-debitur', methods=['GET'])
 def api_download_fasilitas_debitur_page():
     """
-    Download data Excel dari hasil JSON (hasil dari api_fasilitas_debitur_page),
-    dengan urutan kolom sama seperti tabel di frontend.
+    Download data Excel berdasarkan filter periode (YYYYMM).
     """
+    conn = None
+    cursor = None
     try:
-        # if 'username' not in session:
-        #     return jsonify({'success': False, 'message': 'Please log in first.'})
+        periode = request.args.get('periode')
+        if not periode:
+            abort(400, description="Parameter 'periode' wajib diisi")
 
-        data = request.get_json()
-        rows = data.get('data', [])
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        base_where = """
+            WHERE A.bentukBU IS NOT NULL
+              AND LEN(A.npwp) >= 5
+              AND B.jenisKreditPembiayaan IS NOT NULL
+        """
+        periode_expr = f"LEFT(CONVERT(CHAR(8), CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107), 112), 6)"
+        base_where += f" AND {periode_expr} = ?"
+
+        query = f"""
+            SELECT
+                CONVERT(CHAR(8),
+                    EOMONTH(CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107)), 112
+                ) AS [Periode Data],
+                A.npwp AS [ID Debitur/ NPWP],
+                A.namaDebitur AS [Nama Debitur],
+                CONCAT(B.jenisKreditPembiayaan, ' - ', B.jenisKreditPembiayaanKet) AS [Jenis Kredit / Pembiayaan],
+                CONCAT(B.akadKreditPembiayaan, ' - ', B.akadKreditPembiayaanKet) AS [Akad Kredit / Pembiayaan],
+                A.pelaporKet AS [Pelapor],
+                B.bakiDebet AS [Baki Debet],
+                CONCAT(B.kualitas, ' - ', B.kualitasKet) AS [Kolektibilitas],
+                B.jumlahHariTunggakan AS [Jumlah Hari Tunggakan],
+                CONCAT(B.kodeSebabMacet, ' - ', B.sebabMacetKet) AS [Sebab Macet],
+                B.tanggalMacet AS [Tanggal Macet],
+                B.frekuensiTunggakan AS [Frekuensi Tunggakan],
+                B.denda AS [Denda Biaya],
+                B.frekuensiRestrukturisasi AS [Frekuensi Restrukturisasi],
+                B.tanggalRestrukturisasiAkhir AS [Tanggal Restrukturisasi Terakhir]
+            FROM [dbo].[slik_data_pokok_debitur] A
+            LEFT JOIN [dbo].[slik_fasilitas_kredit_pembiayaan] B
+                ON A.namaFileUpload = B.namaFileUpload 
+                AND A.periodeData = B.periodeData 
+                AND A.pelaporKet = B.ljkKet
+            {base_where}
+            ORDER BY [Nama Debitur]
+        """
+
+        cursor.execute(query, [periode])
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+
         if not rows:
-            return jsonify({'success': False, 'message': 'Tidak ada data untuk diunduh.'})
-
-        # Urutan kolom harus sama seperti tabel HTML
-        columns = [
-            "Periode Data",
-            "ID Debitur/ NPWP",
-            "Nama Debitur",
-            "Jenis Kredit / Pembiayaan",
-            "Akad Kredit / Pembiayaan",
-            "Pelapor",
-            "Baki Debet",
-            "Kolektibilitas",
-            "Jumlah Hari Tunggakan",
-            "Sebab Macet",
-            "Tanggal Macet",
-            "Frekuensi Tunggakan",
-            "Denda Biaya",
-            "Frekuensi Restrukturisasi",
-            "Tanggal Restrukturisasi Terakhir"
-        ]
+            abort(404, description="Tidak ada data untuk periode tersebut")
 
         # Buat workbook Excel
         wb = openpyxl.Workbook()
@@ -3552,39 +3592,40 @@ def api_download_fasilitas_debitur_page():
         # Header
         ws.append(columns)
 
-        # Isi data sesuai urutan kolom di atas
+        # Data
         for row in rows:
-            ws.append([row.get(col) for col in columns])
+            ws.append(list(row))
 
-        # Format kolom numerik & auto-width
+        # Auto-width dan format angka
+        numeric_cols = {"Baki Debet", "Jumlah Hari Tunggakan", "Denda Biaya", "Frekuensi Tunggakan", "Frekuensi Restrukturisasi"}
         for col_idx, col_name in enumerate(columns, start=1):
             col_letter = get_column_letter(col_idx)
-
-            # Format angka jika seluruh kolom berisi numeric
-            if all(isinstance(r.get(col_name), (int, float)) for r in rows if r.get(col_name) is not None):
+            max_len = max(len(str(r[col_idx - 1])) if r[col_idx - 1] is not None else 0 for r in rows)
+            ws.column_dimensions[col_letter].width = min(max(max_len, len(col_name)) + 2, 50)
+            if col_name in numeric_cols:
                 for row_idx in range(2, len(rows) + 2):
                     ws.cell(row=row_idx, column=col_idx).number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
 
-            # Auto-width
-            max_len = max(len(str(r.get(col_name))) if r.get(col_name) is not None else 0 for r in rows)
-            ws.column_dimensions[col_letter].width = min(max(max_len, len(col_name)) + 2, 50)
-
-        # Simpan ke memori
+        # Simpan ke memory buffer
         output = BytesIO()
         wb.save(output)
         output.seek(0)
 
-        filename = f"fasilitas_debitur_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filename = f"fasilitas_debitur_{periode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return send_file(
             output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name=filename
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-    
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
 # Data Kualitas Terburuk per Periode
 @app.route('/data-kualitas-terburuk', methods=['GET'])
 def data_kualitas_terburuk_page():
@@ -3595,7 +3636,8 @@ def data_kualitas_terburuk_page():
         'data_kualitas_terburuk.html',
         username=session.get('username'),
         fullname=session.get('fullname'),
-        role_access=session.get('role_access')
+        role_access=session.get('role_access'),
+        report_access=session.get('report_access')
     )
             
 @app.route('/api/data-kualitas-terburuk', methods=['GET'])
@@ -3604,94 +3646,86 @@ def api_data_kualitas_terburuk_page():
     Endpoint untuk data kualitas terburuk dengan filter periode (YYYYMM), pagination, dan limit.
     Query params: periode (format: YYYYMM), page, page_size
     """
+    conn = None
+    cursor = None
     try:
-        # Ambil parameter
+        # --- Ambil parameter dari request ---
         periode = request.args.get('periode')  # contoh: 202508
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 50))
+        offset = (page - 1) * page_size
 
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        offset = (page - 1) * page_size
-        params = []
-
-        # Filter periode
+        # --- Filter periode (opsional) ---
         where_clause = ""
+        params = []
         if periode:
-            where_clause = """
-            WHERE LEFT(CONVERT(CHAR(8),
-                    CONVERT(DATE, '01 ' +
-                        CASE
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Januari' THEN REPLACE(A.periodeData, 'Januari', 'January')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Februari' THEN REPLACE(A.periodeData, 'Februari', 'February')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Maret' THEN REPLACE(A.periodeData, 'Maret', 'March')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'April' THEN REPLACE(A.periodeData, 'April', 'April')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Mei' THEN REPLACE(A.periodeData, 'Mei', 'May')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juni' THEN REPLACE(A.periodeData, 'Juni', 'June')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juli' THEN REPLACE(A.periodeData, 'Juli', 'July')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Agustus' THEN REPLACE(A.periodeData, 'Agustus', 'August')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'September' THEN REPLACE(A.periodeData, 'September', 'September')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Oktober' THEN REPLACE(A.periodeData, 'Oktober', 'October')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'November' THEN REPLACE(A.periodeData, 'November', 'November')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Desember' THEN REPLACE(A.periodeData, 'Desember', 'December')
-                        END
-                    , 107), 112), 6) = ?
+            where_clause = f"""
+                WHERE LEFT(CONVERT(CHAR(8),
+                        CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107), 112), 6) = ?
             """
             params.append(periode)
 
-        # --- QUERY UTAMA (berdasarkan query kamu sebelumnya) ---
-        base_query = f"""
+        # ====================================================
+        # QUERY HITUNG TOTAL (akurat & efisien)
+        # ====================================================
+        count_query = f"""
+            SELECT COUNT(*) AS total
+            FROM (
+                SELECT DISTINCT
+                    A.namaDebitur,
+                    A.npwp
+                FROM (
+                    SELECT DISTINCT periodeData, namaDebitur, npwp, namaFileUpload
+                    FROM slik_data_pokok_debitur
+                    WHERE bentukBU IS NOT NULL AND LEN(npwp) >= 5
+                ) A
+                LEFT JOIN slik_ringkasan_fasilitas B
+                    ON A.periodeData = B.periodeData
+                    AND A.namaFileUpload = B.namaFileUpload
+                {where_clause}
+            ) AS sub
+        """
+        cursor.execute(count_query, params)
+        total_records = cursor.fetchone()[0]
+
+        # ====================================================
+        # QUERY DATA (dengan pagination)
+        # ====================================================
+        data_query = f"""
+            SELECT DISTINCT
+                CONVERT(CHAR(8),
+                    EOMONTH(CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107)), 112
+                ) AS [Periode Data],
+                A.namaDebitur AS [Nama Debitur],
+                A.npwp AS [ID Debitur NPWP],
+                B.kualitasTerburuk AS [Kualitas Terburuk],
+                B.kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
             FROM (
                 SELECT DISTINCT periodeData, namaDebitur, npwp, namaFileUpload
                 FROM slik_data_pokok_debitur
                 WHERE bentukBU IS NOT NULL AND LEN(npwp) >= 5
             ) A
             LEFT JOIN slik_ringkasan_fasilitas B
-                ON A.periodeData = B.periodeData AND A.namaFileUpload = B.namaFileUpload
+                ON A.periodeData = B.periodeData
+                AND A.namaFileUpload = B.namaFileUpload
             {where_clause}
-        """
-
-        # Hitung total data
-        count_query = f"SELECT COUNT(*) {base_query}"
-        cursor.execute(count_query, params)
-        total_records = cursor.fetchone()[0]
-
-        # Ambil data dengan pagination
-        data_query = f"""
-            SELECT DISTINCT
-                CONVERT(CHAR(8),
-                    EOMONTH(
-                        CONVERT(DATE, '01 ' +
-                            CASE
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Januari' THEN REPLACE(A.periodeData, 'Januari', 'January')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Februari' THEN REPLACE(A.periodeData, 'Februari', 'February')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Maret' THEN REPLACE(A.periodeData, 'Maret', 'March')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'April' THEN REPLACE(A.periodeData, 'April', 'April')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Mei' THEN REPLACE(A.periodeData, 'Mei', 'May')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juni' THEN REPLACE(A.periodeData, 'Juni', 'June')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juli' THEN REPLACE(A.periodeData, 'Juli', 'July')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Agustus' THEN REPLACE(A.periodeData, 'Agustus', 'August')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'September' THEN REPLACE(A.periodeData, 'September', 'September')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Oktober' THEN REPLACE(A.periodeData, 'Oktober', 'October')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'November' THEN REPLACE(A.periodeData, 'November', 'November')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Desember' THEN REPLACE(A.periodeData, 'Desember', 'December')
-                            END
-                        , 107)), 112) AS [Periode Data],
-                A.namaDebitur AS [Nama Debitur],
-                A.npwp AS [ID Debitur NPWP],
-                B.kualitasTerburuk AS [Kualitas Terburuk],
-                B.kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
-            {base_query}
             ORDER BY [Nama Debitur]
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
         """
 
-        cursor.execute(data_query, params + [offset, page_size])
+        # --- Eksekusi query data ---
+        all_params = params + [offset, page_size]
+        cursor.execute(data_query, all_params)
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
         data = [dict(zip(columns, row)) for row in rows]
 
+        # ====================================================
+        # RETURN JSON RESPONSE
+        # ====================================================
         return jsonify({
             'success': True,
             'data': data,
@@ -3707,21 +3741,15 @@ def api_data_kualitas_terburuk_page():
         if cursor: cursor.close()
         if conn: conn.close()
         
-@app.route('/api/download-data-kualitas-terburuk', methods=['POST'])
+@app.route('/api/download-data-kualitas-terburuk', methods=['GET'])
 def api_download_data_kualitas_terburuk_page():
     """
-    Download data kualitas terburuk (Excel) identik dengan hasil /api/data-kualitas-terburuk
+    Download data kualitas terburuk (Excel) berdasarkan filter periode (YYYYMM).
     """
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': 'Please log in first.'})
-
     conn = None
     cursor = None
-
     try:
-        data = request.json or {}
-        periode = data.get('periode')  # format: YYYYMM
-
+        periode = request.args.get('periode')
         conn = get_db_connection()
         cursor = conn.cursor()
 
@@ -3729,48 +3757,17 @@ def api_download_data_kualitas_terburuk_page():
         where_clause = ""
 
         if periode:
-            where_clause = """
-            WHERE LEFT(CONVERT(CHAR(8),
-                    CONVERT(DATE, '01 ' +
-                        CASE
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Januari' THEN REPLACE(A.periodeData, 'Januari', 'January')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Februari' THEN REPLACE(A.periodeData, 'Februari', 'February')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Maret' THEN REPLACE(A.periodeData, 'Maret', 'March')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'April' THEN REPLACE(A.periodeData, 'April', 'April')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Mei' THEN REPLACE(A.periodeData, 'Mei', 'May')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juni' THEN REPLACE(A.periodeData, 'Juni', 'June')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juli' THEN REPLACE(A.periodeData, 'Juli', 'July')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Agustus' THEN REPLACE(A.periodeData, 'Agustus', 'August')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'September' THEN REPLACE(A.periodeData, 'September', 'September')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Oktober' THEN REPLACE(A.periodeData, 'Oktober', 'October')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'November' THEN REPLACE(A.periodeData, 'November', 'November')
-                            WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Desember' THEN REPLACE(A.periodeData, 'Desember', 'December')
-                        END
-                    , 107), 112), 6) = ?
+            where_clause = f"""
+                WHERE LEFT(CONVERT(CHAR(8),
+                        CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107), 112), 6) = ?
             """
             params.append(periode)
 
-        # --- Query utama sama persis dengan api_data_kualitas_terburuk_page ---
         query = f"""
             SELECT DISTINCT
                 CONVERT(CHAR(8),
-                    EOMONTH(
-                        CONVERT(DATE, '01 ' +
-                            CASE
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Januari' THEN REPLACE(A.periodeData, 'Januari', 'January')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Februari' THEN REPLACE(A.periodeData, 'Februari', 'February')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Maret' THEN REPLACE(A.periodeData, 'Maret', 'March')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'April' THEN REPLACE(A.periodeData, 'April', 'April')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Mei' THEN REPLACE(A.periodeData, 'Mei', 'May')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juni' THEN REPLACE(A.periodeData, 'Juni', 'June')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Juli' THEN REPLACE(A.periodeData, 'Juli', 'July')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Agustus' THEN REPLACE(A.periodeData, 'Agustus', 'August')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'September' THEN REPLACE(A.periodeData, 'September', 'September')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Oktober' THEN REPLACE(A.periodeData, 'Oktober', 'October')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'November' THEN REPLACE(A.periodeData, 'November', 'November')
-                                WHEN LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1) = 'Desember' THEN REPLACE(A.periodeData, 'Desember', 'December')
-                            END
-                        , 107)), 112) AS [Periode Data],
+                    EOMONTH(CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107)), 112
+                ) AS [Periode Data],
                 A.namaDebitur AS [Nama Debitur],
                 A.npwp AS [ID Debitur NPWP],
                 B.kualitasTerburuk AS [Kualitas Terburuk],
@@ -3790,7 +3787,9 @@ def api_download_data_kualitas_terburuk_page():
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
 
-        # === Buat file Excel ===
+        if not rows:
+            return jsonify({'success': False, 'message': 'Tidak ada data untuk periode tersebut.'})
+
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data Kualitas Terburuk"
@@ -3801,15 +3800,14 @@ def api_download_data_kualitas_terburuk_page():
 
         # Auto width
         for i, col in enumerate(columns, start=1):
-            length = max(len(str(col)), max((len(str(r[i-1])) for r in rows if r[i-1] is not None), default=0))
-            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = min(length + 2, 50)
+            max_len = max(len(str(r[i-1])) if r[i-1] else 0 for r in rows)
+            ws.column_dimensions[get_column_letter(i)].width = min(max(max_len, len(col)) + 2, 50)
 
-        # Simpan ke buffer
         output = BytesIO()
         wb.save(output)
         output.seek(0)
-        filename = f"data_kualitas_terburuk_{periode or 'all'}.xlsx"
 
+        filename = f"data_kualitas_terburuk_{periode or 'all'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return send_file(
             output,
             as_attachment=True,
@@ -3827,6 +3825,7 @@ def api_download_data_kualitas_terburuk_page():
 def get_tax_cte() -> str:
     """
     CTE utama gabungan data Debitur Aktif (Konvensional + Syariah)
+    dengan dukungan filter periode dinamis (YYYYMM)
     """
     return """
     ;WITH TAX AS (
@@ -3836,25 +3835,45 @@ def get_tax_cte() -> str:
             A.CUSTOMER_ID,
             A.CUST_NAME,
             D02.Nomor_Identitas_Badan_Usaha,
-            CASE WHEN SUM(CASE WHEN F.FACILITY_STATUS = 'AC' THEN 1 ELSE 0 END) > 0
-                 THEN 'Active' ELSE 'Closed' END AS CUSTOMER_STATUS
+            CASE 
+                WHEN SUM(CASE WHEN F.FACILITY_STATUS = 'AC' THEN 1 ELSE 0 END) > 0 
+                THEN 'Active' 
+                ELSE 'Closed' 
+            END AS CUSTOMER_STATUS
         FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER A
         LEFT JOIN (
             SELECT *
             FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_T_INF_COR_FACILITY_ACCOUNT
             WHERE PRODUCT_ID NOT IN (40,1083,1082,1084,1086)
-              AND PBK_EOD_DATE = (SELECT MAX(PBK_EOD_DATE)
-                                   FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER)
-        ) F ON A.CUSTOMER_ID = F.CUSTOMER_ID AND A.PBK_EOD_DATE = F.PBK_EOD_DATE
+        ) F ON A.CUSTOMER_ID = F.CUSTOMER_ID 
+           AND A.PBK_EOD_DATE = F.PBK_EOD_DATE
         LEFT JOIN [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02 D02
             ON YEAR(A.PBK_EOD_DATE) = YEAR(D02.Tanggal_Data)
            AND MONTH(DATEADD(MONTH, -1, A.PBK_EOD_DATE)) = MONTH(D02.Tanggal_Data)
-           AND (CASE WHEN A.CUSTOMER_ID IN ('433','404') THEN '711'
-                     WHEN A.CUSTOMER_ID = '697' THEN '699'
-                     ELSE A.CUSTOMER_ID END) = D02.[Nomor_CIF Debitur]
-        WHERE A.PBK_EOD_DATE = (SELECT MAX(PBK_EOD_DATE)
-                                FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER)
-        GROUP BY A.PBK_EOD_DATE, A.CUSTOMER_ID, A.CUST_NAME, D02.Nomor_Identitas_Badan_Usaha
+           AND (
+                CASE 
+                    WHEN A.CUSTOMER_ID IN ('433','404') THEN '711'
+                    WHEN A.CUSTOMER_ID = '697' THEN '699'
+                    ELSE A.CUSTOMER_ID 
+                END
+           ) = D02.[Nomor_CIF Debitur]
+        WHERE 
+            -- Ambil sesuai periode yang diminta, atau default ke MAX jika tidak ada filter
+            A.PBK_EOD_DATE = (
+                SELECT 
+                    COALESCE(
+                        MAX(PBK_EOD_DATE),
+                        (SELECT MAX(PBK_EOD_DATE) 
+                         FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER)
+                    )
+                FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER
+                WHERE @periode IS NULL OR CONVERT(CHAR(6), PBK_EOD_DATE, 112) = @periode
+            )
+        GROUP BY 
+            A.PBK_EOD_DATE, 
+            A.CUSTOMER_ID, 
+            A.CUST_NAME, 
+            D02.Nomor_Identitas_Badan_Usaha
 
         UNION ALL
 
@@ -3871,13 +3890,20 @@ def get_tax_cte() -> str:
            AND MONTH(DATEADD(MONTH, -1, A.[EOD DATE])) = MONTH(D02.Tanggal_Data)
            AND A.ID = D02.[Nomor_CIF Debitur]
         LEFT JOIN (
-            SELECT DISTINCT [CUSTOMER ID], STATUS
+            SELECT DISTINCT [CUSTOMER ID], STATUS, [EOD DATE]
             FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_LD_LOANS_AND_DEPOSITS
-            WHERE [EOD DATE] = (SELECT MAX([EOD DATE])
-                                FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER)
-        ) B ON A.ID = B.[CUSTOMER ID]
-        WHERE A.[EOD DATE] = (SELECT MAX([EOD DATE])
-                              FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER)
+        ) B ON A.ID = B.[CUSTOMER ID] AND A.[EOD DATE] = B.[EOD DATE]
+        WHERE 
+            A.[EOD DATE] = (
+                SELECT 
+                    COALESCE(
+                        MAX([EOD DATE]),
+                        (SELECT MAX([EOD DATE]) 
+                         FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER)
+                    )
+                FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER
+                WHERE @periode IS NULL OR CONVERT(CHAR(6), [EOD DATE], 112) = @periode
+            )
           AND STATUS = 'CUR'
     )
     """
@@ -3892,54 +3918,62 @@ def data_debitur_aktif_page():
         'data_debitur_aktif.html',
         username=session.get('username'),
         fullname=session.get('fullname'),
-        role_access=session.get('role_access')
+        role_access=session.get('role_access'),
+        report_access=session.get('report_access')
     )
             
 @app.route('/api/data-debitur-aktif', methods=['GET'])
 def api_data_debitur_aktif_page():
+    """
+    Endpoint untuk menampilkan data debitur aktif (gabungan konvensional & syariah)
+    dengan filter periode (YYYYMM), pagination, dan limit.
+    Query params: periode, page, page_size
+    """
     try:
-        periode = request.args.get('periode')
+        periode = request.args.get('periode')  # contoh: 202510
         page = max(int(request.args.get('page', 1)), 1)
         page_size = min(int(request.args.get('page_size', 50)), 1000)
         offset = (page - 1) * page_size
 
-        where_clause = "WHERE CUSTOMER_STATUS = 'Active'"
-        params = []
-
-        if periode:
-            where_clause += " AND CONVERT(CHAR(6), PBK_EOD_DATE, 112) = ?"
-            params.append(periode)
-
+        # Ambil CTE dengan parameter periode
         cte_query = get_tax_cte()
 
+        # ==== Query Count ====
+        query_count = f"""
+            DECLARE @periode CHAR(6) = ?;
+            {cte_query}
+            SELECT COUNT(*) AS total
+            FROM TAX
+            WHERE CUSTOMER_STATUS = 'Active';
+        """
+
+        # ==== Query Data ====
         query_data = f"""
+            DECLARE @periode CHAR(6) = ?;
             {cte_query}
             SELECT *
             FROM TAX
-            {where_clause}
+            WHERE CUSTOMER_STATUS = 'Active'
             ORDER BY CUSTOMER_ID
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY;
         """
 
-        query_count = f"""
-            {cte_query}
-            SELECT COUNT(*) AS total FROM TAX {where_clause};
-        """
-
         with get_db_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query_data, params + [offset, page_size])
+            # Hitung total dulu
+            cursor.execute(query_count, [periode])
+            total = cursor.fetchone()[0]
+
+            # Ambil data sesuai pagination
+            cursor.execute(query_data, [periode, offset, page_size])
             columns = [col[0] for col in cursor.description]
             data = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-            cursor.execute(query_count, params)
-            total = cursor.fetchone()[0]
-
         return jsonify({
             'success': True,
-            'page': page,
-            'page_size': page_size,
+            'data': data,
             'total': total,
-            'data': data
+            'page': page,
+            'page_size': page_size
         })
 
     except Exception as e:
@@ -3948,54 +3982,58 @@ def api_data_debitur_aktif_page():
 
 @app.route('/api/download-data-debitur-aktif', methods=['POST'])
 def api_download_data_debitur_aktif_page():
+    """
+    Download data Debitur Aktif ke Excel (identik dengan hasil /api/data-debitur-aktif)
+    """
     if 'username' not in session:
         return jsonify({'success': False, 'message': 'Please log in first.'})
 
     try:
-        periode = request.json.get('periode')
+        periode = request.json.get('periode')  # contoh: "202511" atau None
 
-        where_clause = "WHERE CUSTOMER_STATUS = 'Active'"
-        params = []
-        if periode:
-            where_clause += " AND CONVERT(CHAR(6), PBK_EOD_DATE, 112) = ?"
-            params.append(periode)
-
+        # Gunakan versi query dengan deklarasi variabel @periode
         query = f"""
+            DECLARE @periode CHAR(6) = ?;
             {get_tax_cte()}
             SELECT *
             FROM TAX
-            {where_clause}
-            ORDER BY CUSTOMER_ID ASC;
+            WHERE CUSTOMER_STATUS = 'Active'
+            ORDER BY CUSTOMER_ID;
         """
 
+        # --- Eksekusi query ---
         with get_db_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            columns = [col[0] for col in cursor.description]
+            cursor.execute(query, [periode])
             rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
 
+        # --- Buat Workbook Excel ---
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Debitur Aktif"
         ws.append(columns)
+        ws.freeze_panes = "A2"
 
         thin = Border(left=Side(style='thin'), right=Side(style='thin'),
                       top=Side(style='thin'), bottom=Side(style='thin'))
-        ws.freeze_panes = "A2"
 
+        # Isi data
         for row in rows:
             ws.append(list(row))
 
+        # Format kolom otomatis
         for col_idx, col_name in enumerate(columns, start=1):
             max_len = len(col_name)
-            for row_idx, row in enumerate(rows, start=2):
+            for row_idx in range(2, len(rows) + 2):
                 cell = ws.cell(row=row_idx, column=col_idx)
+                cell.border = thin
                 if isinstance(cell.value, (int, float)):
                     cell.number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
-                cell.border = thin
                 if cell.value:
                     max_len = max(max_len, len(str(cell.value)))
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 50)
 
+        # Simpan ke stream
         output = BytesIO()
         wb.save(output)
         output.seek(0)

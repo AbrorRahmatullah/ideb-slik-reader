@@ -44,7 +44,6 @@
                         <th>Tanggal Restrukturisasi Terakhir</th>
                     </tr>
                 </thead>
-                <tbody></tbody>
             </table>
         </div>
     </div>
@@ -52,14 +51,14 @@
 
 <script>
 let fasilitasTable;
-let lastData = [];
 
-// --- INIT DATATABLE ---
+// --- INIT DATATABLE SERVER-SIDE ---
 function initTable() {
     fasilitasTable = $('#fasilitasTable').DataTable({
         serverSide: true,
         processing: true,
-        ajax: function(data, callback) {
+        searching: false, // backend tidak handle pencarian umum
+        ajax: function (data, callback) {
             const page = Math.floor(data.start / data.length) + 1;
             const page_size = data.length;
             const periodeInput = document.getElementById("periodeFilter").value;
@@ -74,13 +73,18 @@ function initTable() {
                             recordsFiltered: result.total,
                             data: result.data
                         });
-                        lastData = result.data;
+                        // Simpan data halaman terakhir untuk keperluan download
+                        window.lastData = result.data;
                         $('#btnDownload').prop('disabled', result.data.length === 0);
                     } else {
                         callback({ data: [] });
+                        $('#btnDownload').prop('disabled', true);
                     }
                 })
-                .catch(() => callback({ data: [] }));
+                .catch(() => {
+                    callback({ data: [] });
+                    $('#btnDownload').prop('disabled', true);
+                });
         },
         pageLength: 10,
         scrollX: true,
@@ -105,53 +109,22 @@ function initTable() {
     });
 }
 
-// --- FETCH DATA ---
-async function loadData(periode = "") {
-    $('#btnFilter').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Loading...');
-    $('#btnDownload').prop('disabled', true);
-
-    try {
-        const response = await fetch(`/api/data-fasilitas-debitur?periode=${periode}`);
-        const result = await response.json();
-
-        if (result.success) {
-            lastData = result.data || [];
-            fasilitasTable.clear().rows.add(lastData).draw();
-            $('#btnDownload').prop('disabled', lastData.length === 0);
-        } else {
-            alert("Gagal memuat data: " + result.message);
-        }
-    } catch (err) {
-        console.error(err);
-        alert("Terjadi kesalahan saat mengambil data.");
-    } finally {
-        $('#btnFilter').prop('disabled', false).html('<i class="fas fa-search"></i> Tampilkan');
-    }
-}
-
-// --- DOWNLOAD EXCEL ---
+// --- DOWNLOAD EXCEL (semua data periode) ---
 async function downloadExcel() {
-    if (!lastData.length) {
-        alert("Tidak ada data untuk diunduh.");
-        return;
-    }
+    const periodeInput = document.getElementById("periodeFilter").value;
+    const periode = periodeInput ? periodeInput.replace("-", "") : "";
 
     $('#btnDownload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengunduh...');
-    
-    try {
-        const response = await fetch('/api/download-data-fasilitas-debitur', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: lastData })
-        });
 
+    try {
+        const response = await fetch(`/api/download-data-fasilitas-debitur?periode=${periode}`);
         if (!response.ok) throw new Error("Gagal mengunduh file");
 
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `fasilitas_debitur_${new Date().toISOString().slice(0,10)}.xlsx`;
+        a.download = `fasilitas_debitur_${periode}.xlsx`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -166,21 +139,23 @@ async function downloadExcel() {
 
 // --- ON PAGE LOAD ---
 document.addEventListener('DOMContentLoaded', () => {
-    initTable();
-
+    // Set default periode ke bulan berjalan
     const now = new Date();
     const currentMonth = now.toISOString().slice(0, 7);
     document.getElementById("periodeFilter").value = currentMonth;
-    const periodeDefault = currentMonth.replace("-", "");
 
-    loadData(periodeDefault);
+    // Inisialisasi DataTable
+    initTable();
 
+    // Tombol tampilkan = reload data table
     document.getElementById('btnFilter').addEventListener('click', () => {
-        const periodeInput = document.getElementById("periodeFilter").value;
-        const periode = periodeInput ? periodeInput.replace("-", "") : "";
-        loadData(periode);
+        $('#btnFilter').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memuat...');
+        fasilitasTable.ajax.reload(() => {
+            $('#btnFilter').prop('disabled', false).html('<i class="fas fa-search"></i> Tampilkan');
+        });
     });
 
+    // Tombol download Excel
     document.getElementById('btnDownload').addEventListener('click', downloadExcel);
 });
 </script>

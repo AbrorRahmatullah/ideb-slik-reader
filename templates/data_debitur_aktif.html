@@ -8,24 +8,24 @@
     </div>
 
     <div class="card-body">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <div>
-                <label for="periodeFilter" class="form-label">Periode:</label>
-                <input type="month" id="periodeFilter" class="form-control" style="width: 200px; display: inline-block;">
+                <label for="periodeFilter" class="form-label mb-1">Periode:</label>
+                <input type="month" id="periodeFilter" class="form-control" style="width: 200px;">
             </div>
-            <div style="display: flex; gap: 10px;">
-                <button id="btnFilter" class="btn-primary" style="width: auto; padding: 8px 15px;">
+            <div class="d-flex gap-2 align-items-end">
+                <button id="btnFilter" class="btn btn-primary">
                     <i class="fas fa-search"></i> Tampilkan
                 </button>
-                <button id="btnDownload" class="btn-success" style="width: auto; padding: 8px 15px;" disabled>
+                <button id="btnDownload" class="btn btn-success" disabled>
                     <i class="fas fa-file-excel"></i> Download Excel
                 </button>
             </div>
         </div>
 
-        <div class="table-container">
+        <div class="table-responsive">
             <table id="debiturTable" class="table table-striped table-bordered nowrap w-100">
-                <thead>
+                <thead class="table-light">
                     <tr>
                         <th>Periode Data</th>
                         <th>ID Debitur</th>
@@ -44,12 +44,18 @@
 let debiturTable;
 let currentPeriode = "";
 
-// --- INIT DATATABLE ---
+// --- INISIALISASI DATATABLE ---
 function initTable() {
     debiturTable = $('#debiturTable').DataTable({
         serverSide: true,
         processing: true,
         searching: false,
+        pageLength: 10,
+        scrollX: true,
+        language: {
+            processing: "Memuat data...",
+            emptyTable: "Tidak ada data tersedia untuk periode ini."
+        },
         ajax: function (data, callback) {
             const page = Math.floor(data.start / data.length) + 1;
             const page_size = data.length;
@@ -65,10 +71,10 @@ function initTable() {
                             recordsFiltered: result.total,
                             data: result.data
                         });
-                        $('#btnDownload').prop('disabled', result.data.length === 0);
+                        $('#btnDownload').prop('disabled', result.total === 0);
                     } else {
                         callback({ data: [] });
-                        alert("Gagal memuat data: " + result.message);
+                        alert("Gagal memuat data: " + (result.message || "Terjadi kesalahan."));
                     }
                 })
                 .catch(() => {
@@ -82,10 +88,7 @@ function initTable() {
             { data: 'CUST_NAME', title: 'Nama Debitur' },
             { data: 'Nomor_Identitas_Badan_Usaha', title: 'Nomor Identitas Badan Usaha', className: 'text-center' },
             { data: 'CUSTOMER_STATUS', title: 'Status Nasabah', className: 'text-center' }
-        ],
-        pageLength: 10,
-        language: { processing: "Memuat data..." },
-        scrollX: true
+        ]
     });
 }
 
@@ -98,8 +101,6 @@ function reloadTable() {
 
 // --- DOWNLOAD EXCEL ---
 async function downloadExcel() {
-    if ($('#btnDownload').prop('disabled')) return;
-
     $('#btnDownload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengunduh...');
 
     try {
@@ -128,10 +129,11 @@ async function downloadExcel() {
     }
 }
 
-// --- ON PAGE LOAD ---
+// --- INIT PAGE ---
 document.addEventListener('DOMContentLoaded', () => {
     initTable();
 
+    // Set default periode ke bulan ini
     const now = new Date();
     const currentMonth = now.toISOString().slice(0, 7);
     document.getElementById("periodeFilter").value = currentMonth;

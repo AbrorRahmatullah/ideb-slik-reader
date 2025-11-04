@@ -34,7 +34,6 @@
                         <th>Kualitas Bulan Data Terburuk</th>
                     </tr>
                 </thead>
-                <tbody></tbody>
             </table>
         </div>
     </div>
@@ -42,14 +41,13 @@
 
 <script>
 let kualitasTable;
-let lastPeriode = "";
-let lastDataCount = 0;
 
-// --- INIT DATATABLE ---
+// --- INIT DATATABLE (SERVER SIDE) ---
 function initTable() {
     kualitasTable = $('#kualitasTable').DataTable({
         serverSide: true,
         processing: true,
+        searching: false,
         ajax: function(data, callback) {
             const page = Math.floor(data.start / data.length) + 1;
             const page_size = data.length;
@@ -65,8 +63,6 @@ function initTable() {
                             recordsFiltered: result.total,
                             data: result.data
                         });
-                        lastDataCount = result.data.length;
-                        lastPeriode = periode;
                         $('#btnDownload').prop('disabled', result.data.length === 0);
                     } else {
                         callback({ data: [] });
@@ -93,35 +89,28 @@ function initTable() {
 
 // --- FILTER ---
 function applyFilter() {
-    const periodeInput = document.getElementById("periodeFilter").value;
-    const periode = periodeInput ? periodeInput.replace("-", "") : "";
-    lastPeriode = periode;
-    kualitasTable.ajax.reload();
+    $('#btnFilter').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memuat...');
+    kualitasTable.ajax.reload(() => {
+        $('#btnFilter').prop('disabled', false).html('<i class="fas fa-search"></i> Tampilkan');
+    });
 }
 
-// --- DOWNLOAD EXCEL ---
+// --- DOWNLOAD EXCEL (GET) ---
 async function downloadExcel() {
-    if (lastDataCount === 0) {
-        alert("Tidak ada data untuk diunduh.");
-        return;
-    }
+    const periodeInput = document.getElementById("periodeFilter").value;
+    const periode = periodeInput ? periodeInput.replace("-", "") : "";
 
     $('#btnDownload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Mengunduh...');
 
     try {
-        const response = await fetch('/api/download-data-kualitas-terburuk', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ periode: lastPeriode })
-        });
-
+        const response = await fetch(`/api/download-data-kualitas-terburuk?periode=${periode}`);
         if (!response.ok) throw new Error("Gagal mengunduh file");
 
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `data_kualitas_terburuk_${lastPeriode || 'all'}.xlsx`;
+        a.download = `data_kualitas_terburuk_${periode || 'all'}.xlsx`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -136,12 +125,11 @@ async function downloadExcel() {
 
 // --- INIT PAGE ---
 document.addEventListener('DOMContentLoaded', () => {
-    initTable();
-
     const now = new Date();
     const currentMonth = now.toISOString().slice(0, 7);
     document.getElementById("periodeFilter").value = currentMonth;
-    lastPeriode = currentMonth.replace("-", "");
+
+    initTable();
 
     document.getElementById('btnFilter').addEventListener('click', applyFilter);
     document.getElementById('btnDownload').addEventListener('click', downloadExcel);
