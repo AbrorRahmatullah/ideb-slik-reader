@@ -787,17 +787,22 @@ def register():
 @app.route('/', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
+        session.clear()  # Bersihkan session lama
         session['data_available'] = False
 
     elif request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         
-        # Connect to the database
+        # Connect ke database
         conn = get_db_connection()
         cur = conn.cursor()
 
-        cur.execute("SELECT password_hash, role_access, fullname, report_access FROM users WHERE username = ?", (username,))
+        cur.execute("""
+            SELECT password_hash, role_access, fullname, report_access
+            FROM users
+            WHERE username = ?
+        """, (username,))
         user = cur.fetchone()
 
         if user and bcrypt.check_password_hash(user[0], password):
@@ -805,16 +810,25 @@ def login():
             role_access = user[1]
             report_access = user[3]
 
+            # Simpan data ke session
             session.permanent = True
             session['username'] = username
             session['fullname'] = fullname
             session['role_access'] = role_access
             session['report_access'] = report_access
             session['upload_done'] = True
-            
-            print(report_access)
 
-            return redirect(url_for('upload_big_size_file'))
+            print(f"User '{username}' login dengan report_access = {report_access}")
+
+            # Redirect berdasarkan level akses
+            if report_access == 0:
+                return redirect(url_for('upload_big_size_file'))
+            elif report_access == 1:
+                return redirect(url_for('daftar_fasilitas_debitur_page'))
+            else:
+                # report_access == 2 atau nilai lainnya
+                return redirect(url_for('upload_big_size_file'))
+
         else:
             flash("Invalid username or password.")
     
