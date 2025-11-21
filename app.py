@@ -3653,18 +3653,18 @@ def data_kualitas_terburuk_page():
         role_access=session.get('role_access'),
         report_access=session.get('report_access')
     )
-            
+
 @app.route('/api/data-kualitas-terburuk', methods=['GET'])
 def api_data_kualitas_terburuk_page():
     """
     Endpoint untuk data kualitas terburuk dengan filter periode (YYYYMM), pagination, dan limit.
-    Query params: periode (format: YYYYMM), page, page_size
+    Menggunakan CTE optimized query (PeriodeCTE + FinalCTE).
     """
     conn = None
     cursor = None
+
     try:
-        # --- Ambil parameter dari request ---
-        periode = request.args.get('periode')  # contoh: 202508
+        periode = request.args.get('periode')  # contoh: 202509
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 50))
         offset = (page - 1) * page_size
@@ -3672,85 +3672,165 @@ def api_data_kualitas_terburuk_page():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # --- Filter periode (opsional) ---
-        where_clause = ""
+        # ============================
+        # PARAMETER
+        # ============================
         params = []
+        periode_filter = ""
+
         if periode:
-            where_clause = f"""
-                WHERE LEFT(CONVERT(CHAR(8),
-                        CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107), 112), 6) = ?
-            """
+            periode_filter = f"""WHERE LEFT(P.periode_yyyymmdd, 6) = ?
+            AND B.kualitasTerburuk IS NOT NULL
+            AND B.kualitasBulanDataTerburuk IS NOT NULL"""
             params.append(periode)
 
-        # ====================================================
-        # QUERY HITUNG TOTAL (akurat & efisien)
-        # ====================================================
+        # ============================
+        # QUERY HITUNG TOTAL
+        # ============================
         count_query = f"""
-            SELECT COUNT(*) AS total
-            FROM (
-                SELECT DISTINCT
+            WITH PeriodeCTE AS (
+                SELECT 
+                    A.periodeData,
                     A.namaDebitur,
-                    A.npwp
-                FROM (
-                    SELECT DISTINCT periodeData, namaDebitur, npwp, namaFileUpload
-                    FROM slik_data_pokok_debitur
-                    WHERE bentukBU IS NOT NULL AND LEN(npwp) >= 5
-                ) A
-                LEFT JOIN slik_ringkasan_fasilitas B
-                    ON A.periodeData = B.periodeData
-                    AND A.namaFileUpload = B.namaFileUpload
-                {where_clause}
-            ) AS sub
+                    A.npwp,
+                    A.namaFileUpload,
+                    A.uploadDate,
+                    FORMAT(
+                        EOMONTH(
+                            DATEFROMPARTS(
+                                CAST(RIGHT(A.periodeData, 4) AS INT),
+                                CASE LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1)
+                                    WHEN 'Januari'   THEN 1
+                                    WHEN 'Februari'  THEN 2
+                                    WHEN 'Maret'     THEN 3
+                                    WHEN 'April'     THEN 4
+                                    WHEN 'Mei'       THEN 5
+                                    WHEN 'Juni'      THEN 6
+                                    WHEN 'Juli'      THEN 7
+                                    WHEN 'Agustus'   THEN 8
+                                    WHEN 'September' THEN 9
+                                    WHEN 'Oktober'   THEN 10
+                                    WHEN 'November'  THEN 11
+                                    WHEN 'Desember'  THEN 12
+                                END,
+                                1
+                            )
+                        ),
+                        'yyyyMMdd'
+                    ) AS periode_yyyymmdd
+                FROM slik_data_pokok_debitur A
+                WHERE A.bentukBU IS NOT NULL AND A.npwp IS NOT NULL
+            ),
+            FinalCTE AS (
+                SELECT
+                    LEFT(P.periode_yyyymmdd, 6) AS periode_yyyymm,
+                    P.namaDebitur,
+                    P.npwp,
+                    B.kualitasTerburuk,
+                    B.kualitasBulanDataTerburuk,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY LEFT(P.periode_yyyymmdd, 6), P.namaDebitur, P.npwp
+                        ORDER BY P.uploadDate DESC, P.namaFileUpload ASC
+                    ) AS rn
+                FROM PeriodeCTE P
+                INNER JOIN slik_ringkasan_fasilitas B
+                    ON P.namaFileUpload = B.namaFileUpload
+                    AND P.uploadDate = B.uploadDate
+                    AND P.periodeData = B.periodeData
+                    AND B.kualitasTerburuk <> ''
+                    AND B.kualitasBulanDataTerburuk <> ''
+                {periode_filter}
+            )
+            SELECT COUNT(*) FROM FinalCTE WHERE rn = 1;
         """
+
         cursor.execute(count_query, params)
         total_records = cursor.fetchone()[0]
 
-        # ====================================================
-        # QUERY DATA (dengan pagination)
-        # ====================================================
+        # ============================
+        # QUERY DATA PAGINATED
+        # ============================
         data_query = f"""
-            SELECT DISTINCT
-                CONVERT(CHAR(8),
-                    EOMONTH(CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107)), 112
-                ) AS [Periode Data],
-                A.namaDebitur AS [Nama Debitur],
-                A.npwp AS [ID Debitur NPWP],
-                B.kualitasTerburuk AS [Kualitas Terburuk],
-                B.kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
-            FROM (
-                SELECT DISTINCT periodeData, namaDebitur, npwp, namaFileUpload
-                FROM slik_data_pokok_debitur
-                WHERE bentukBU IS NOT NULL AND LEN(npwp) >= 5
-            ) A
-            LEFT JOIN slik_ringkasan_fasilitas B
-                ON A.periodeData = B.periodeData
-                AND A.namaFileUpload = B.namaFileUpload
-            {where_clause}
-            ORDER BY [Nama Debitur]
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            WITH PeriodeCTE AS (
+                SELECT 
+                    A.periodeData,
+                    A.namaDebitur,
+                    A.npwp,
+                    A.namaFileUpload,
+                    A.uploadDate,
+                    FORMAT(
+                        EOMONTH(
+                            DATEFROMPARTS(
+                                CAST(RIGHT(A.periodeData, 4) AS INT),
+                                CASE LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1)
+                                    WHEN 'Januari'   THEN 1
+                                    WHEN 'Februari'  THEN 2
+                                    WHEN 'Maret'     THEN 3
+                                    WHEN 'April'     THEN 4
+                                    WHEN 'Mei'       THEN 5
+                                    WHEN 'Juni'      THEN 6
+                                    WHEN 'Juli'      THEN 7
+                                    WHEN 'Agustus'   THEN 8
+                                    WHEN 'September' THEN 9
+                                    WHEN 'Oktober'   THEN 10
+                                    WHEN 'November'  THEN 11
+                                    WHEN 'Desember'  THEN 12
+                                END,
+                                1
+                            )
+                        ),
+                        'yyyyMMdd'
+                    ) AS periode_yyyymmdd
+                FROM slik_data_pokok_debitur A
+                WHERE A.bentukBU IS NOT NULL AND A.npwp IS NOT NULL
+            ),
+            FinalCTE AS (
+                SELECT
+                    LEFT(P.periode_yyyymmdd, 6) AS periode_yyyymm,
+                    P.namaDebitur,
+                    P.npwp,
+                    B.kualitasTerburuk,
+                    B.kualitasBulanDataTerburuk,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY LEFT(P.periode_yyyymmdd, 6), P.namaDebitur, P.npwp
+                        ORDER BY P.uploadDate DESC, P.namaFileUpload ASC
+                    ) AS rn
+                FROM PeriodeCTE P
+                INNER JOIN slik_ringkasan_fasilitas B
+                    ON P.namaFileUpload = B.namaFileUpload
+                    AND P.uploadDate = B.uploadDate
+                    AND P.periodeData = B.periodeData
+                    AND B.kualitasTerburuk <> ''
+                    AND B.kualitasBulanDataTerburuk <> ''
+                {periode_filter}
+            )
+            SELECT
+                periode_yyyymm AS [Periode Data],
+                namaDebitur AS [Nama Debitur],
+                npwp AS [ID Debitur NPWP],
+                kualitasTerburuk AS [Kualitas Terburuk],
+                kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
+            FROM FinalCTE
+            WHERE rn = 1
+            ORDER BY namaDebitur
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY;
         """
 
-        # --- Eksekusi query data ---
-        all_params = params + [offset, page_size]
-        cursor.execute(data_query, all_params)
+        cursor.execute(data_query, params + [offset, page_size])
         rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-        data = [dict(zip(columns, row)) for row in rows]
+        columns = [c[0] for c in cursor.description]
+        data = [dict(zip(columns, r)) for r in rows]
 
-        # ====================================================
-        # RETURN JSON RESPONSE
-        # ====================================================
         return jsonify({
-            'success': True,
-            'data': data,
-            'total': total_records,
-            'page': page,
-            'page_size': page_size
+            "success": True,
+            "total": total_records,
+            "page": page,
+            "page_size": page_size,
+            "data": data
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
+        return jsonify({"success": False, "message": str(e)})
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
@@ -3759,69 +3839,130 @@ def api_data_kualitas_terburuk_page():
 def api_download_data_kualitas_terburuk_page():
     """
     Download data kualitas terburuk (Excel) berdasarkan filter periode (YYYYMM).
+    Menggunakan CTE optimized query (PeriodeCTE + FinalCTE).
     """
     conn = None
     cursor = None
+
     try:
-        periode = request.args.get('periode')
+        periode = request.args.get('periode')   # contoh: 202509
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
         params = []
-        where_clause = ""
+        periode_filter = ""
 
         if periode:
-            where_clause = f"""
-                WHERE LEFT(CONVERT(CHAR(8),
-                        CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107), 112), 6) = ?
-            """
+            periode_filter = f"""WHERE LEFT(P.periode_yyyymmdd, 6) = ?
+            AND B.kualitasTerburuk IS NOT NULL
+            AND B.kualitasBulanDataTerburuk IS NOT NULL"""
             params.append(periode)
 
-        query = f"""
-            SELECT DISTINCT
-                CONVERT(CHAR(8),
-                    EOMONTH(CONVERT(DATE, '01 ' + {convert_bulan_sql('A.periodeData')}, 107)), 112
-                ) AS [Periode Data],
-                A.namaDebitur AS [Nama Debitur],
-                A.npwp AS [ID Debitur NPWP],
-                B.kualitasTerburuk AS [Kualitas Terburuk],
-                B.kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
-            FROM (
-                SELECT DISTINCT periodeData, namaDebitur, npwp, namaFileUpload
-                FROM slik_data_pokok_debitur
-                WHERE bentukBU IS NOT NULL AND LEN(npwp) >= 5
-            ) A
-            LEFT JOIN slik_ringkasan_fasilitas B
-                ON A.periodeData = B.periodeData AND A.namaFileUpload = B.namaFileUpload
-            {where_clause}
-            ORDER BY [Nama Debitur]
+        # ============================
+        # QUERY DOWNLOAD FULL DATA
+        # ============================
+        download_query = f"""
+            WITH PeriodeCTE AS (
+                SELECT 
+                    A.periodeData,
+                    A.namaDebitur,
+                    A.npwp,
+                    A.namaFileUpload,
+                    A.uploadDate,
+                    FORMAT(
+                        EOMONTH(
+                            DATEFROMPARTS(
+                                CAST(RIGHT(A.periodeData, 4) AS INT),
+                                CASE LEFT(A.periodeData, CHARINDEX(' ', A.periodeData) - 1)
+                                    WHEN 'Januari'   THEN 1
+                                    WHEN 'Februari'  THEN 2
+                                    WHEN 'Maret'     THEN 3
+                                    WHEN 'April'     THEN 4
+                                    WHEN 'Mei'       THEN 5
+                                    WHEN 'Juni'      THEN 6
+                                    WHEN 'Juli'      THEN 7
+                                    WHEN 'Agustus'   THEN 8
+                                    WHEN 'September' THEN 9
+                                    WHEN 'Oktober'   THEN 10
+                                    WHEN 'November'  THEN 11
+                                    WHEN 'Desember'  THEN 12
+                                END,
+                                1
+                            )
+                        ),
+                        'yyyyMMdd'
+                    ) AS periode_yyyymmdd
+                FROM slik_data_pokok_debitur A
+                WHERE A.bentukBU IS NOT NULL AND A.npwp IS NOT NULL
+            ),
+            FinalCTE AS (
+                SELECT
+                    LEFT(P.periode_yyyymmdd, 6) AS periode_yyyymm,
+                    P.namaDebitur,
+                    P.npwp,
+                    B.kualitasTerburuk,
+                    B.kualitasBulanDataTerburuk,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY LEFT(P.periode_yyyymmdd, 6), P.namaDebitur, P.npwp
+                        ORDER BY P.uploadDate DESC, P.namaFileUpload ASC
+                    ) AS rn
+                FROM PeriodeCTE P
+                INNER JOIN slik_ringkasan_fasilitas B
+                    ON P.namaFileUpload = B.namaFileUpload
+                    AND P.uploadDate = B.uploadDate
+                    AND P.periodeData = B.periodeData
+                    AND B.kualitasTerburuk <> ''
+                    AND B.kualitasBulanDataTerburuk <> ''
+                {periode_filter}
+            )
+            SELECT
+                periode_yyyymm AS [Periode Data],
+                namaDebitur AS [Nama Debitur],
+                npwp AS [ID Debitur NPWP],
+                kualitasTerburuk AS [Kualitas Terburuk],
+                kualitasBulanDataTerburuk AS [Kualitas Bulan Data Terburuk]
+            FROM FinalCTE
+            WHERE rn = 1
+            ORDER BY namaDebitur;
         """
 
-        cursor.execute(query, params)
+        cursor.execute(download_query, params)
         rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
+        columns = [c[0] for c in cursor.description]
 
         if not rows:
-            return jsonify({'success': False, 'message': 'Tidak ada data untuk periode tersebut.'})
+            return jsonify({
+                "success": False,
+                "message": "Tidak ada data untuk periode tersebut."
+            })
 
+        # ============================
+        # EXPORT TO EXCEL
+        # ============================
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data Kualitas Terburuk"
 
+        # Header
         ws.append(columns)
+
+        # Data rows
         for row in rows:
             ws.append(list(row))
 
-        # Auto width
+        # Auto column width
         for i, col in enumerate(columns, start=1):
             max_len = max(len(str(r[i-1])) if r[i-1] else 0 for r in rows)
             ws.column_dimensions[get_column_letter(i)].width = min(max(max_len, len(col)) + 2, 50)
 
+        # Output stream
         output = BytesIO()
         wb.save(output)
         output.seek(0)
 
         filename = f"data_kualitas_terburuk_{periode or 'all'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
         return send_file(
             output,
             as_attachment=True,
@@ -3830,7 +3971,7 @@ def api_download_data_kualitas_terburuk_page():
         )
 
     except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({"success": False, "message": str(e)})
 
     finally:
         if cursor: cursor.close()
@@ -3838,89 +3979,121 @@ def api_download_data_kualitas_terburuk_page():
 
 def get_tax_cte() -> str:
     """
-    CTE utama gabungan data Debitur Aktif (Konvensional + Syariah)
-    dengan dukungan filter periode dinamis (YYYYMM)
+    CTE gabungan Debitur Aktif (Konvensional + Syariah)
+    Menggunakan parameter @periode (YYYYMM)
+    Query mengikuti versi SQL terbaru dari user.
     """
     return """
-    ;WITH TAX AS (
-        -- KONVENSIONAL
+    ;WITH TAX AS
+    (
+        -----------------------------------------
+        --             KONVENSIONAL
+        -----------------------------------------
         SELECT
             A.PBK_EOD_DATE,
             A.CUSTOMER_ID,
             A.CUST_NAME,
             D02.Nomor_Identitas_Badan_Usaha,
-            CASE 
-                WHEN SUM(CASE WHEN F.FACILITY_STATUS = 'AC' THEN 1 ELSE 0 END) > 0 
-                THEN 'Active' 
-                ELSE 'Closed' 
+
+            CASE
+                WHEN SUM(CASE WHEN F.FACILITY_STATUS = 'AC' THEN 1 ELSE 0 END) > 0
+                    THEN 'Active'
+                ELSE 'Closed'
             END AS CUSTOMER_STATUS
+
         FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER A
+
         LEFT JOIN (
             SELECT *
             FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_T_INF_COR_FACILITY_ACCOUNT
             WHERE PRODUCT_ID NOT IN (40,1083,1082,1084,1086)
-        ) F ON A.CUSTOMER_ID = F.CUSTOMER_ID 
+        ) F
+            ON A.CUSTOMER_ID = F.CUSTOMER_ID
            AND A.PBK_EOD_DATE = F.PBK_EOD_DATE
+
         LEFT JOIN [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02 D02
             ON YEAR(A.PBK_EOD_DATE) = YEAR(D02.Tanggal_Data)
-           AND MONTH(DATEADD(MONTH, -1, A.PBK_EOD_DATE)) = MONTH(D02.Tanggal_Data)
+           AND MONTH(A.PBK_EOD_DATE) = MONTH(D02.Tanggal_Data)
            AND (
-                CASE 
-                    WHEN A.CUSTOMER_ID IN ('433','404') THEN '711'
-                    WHEN A.CUSTOMER_ID = '697' THEN '699'
-                    ELSE A.CUSTOMER_ID 
+                CASE
+                    WHEN A.CUSTOMER_ID IN ('433','404') THEN '711'   -- Angkasa Pura
+                    WHEN A.CUSTOMER_ID = '697' THEN '699'           -- TJT
+                    ELSE A.CUSTOMER_ID
                 END
            ) = D02.[Nomor_CIF Debitur]
-        WHERE 
-            -- Ambil sesuai periode yang diminta, atau default ke MAX jika tidak ada filter
+
+        WHERE
             A.PBK_EOD_DATE = (
-                SELECT 
-                    COALESCE(
-                        MAX(PBK_EOD_DATE),
-                        (SELECT MAX(PBK_EOD_DATE) 
-                         FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER)
-                    )
+                SELECT MAX(PBK_EOD_DATE)
                 FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_M_CIF_CUSTOMER
-                WHERE @periode IS NULL OR CONVERT(CHAR(6), PBK_EOD_DATE, 112) = @periode
+                WHERE @periode IS NULL
+                   OR CONVERT(CHAR(6), PBK_EOD_DATE, 112) = @periode
             )
-        GROUP BY 
-            A.PBK_EOD_DATE, 
-            A.CUSTOMER_ID, 
-            A.CUST_NAME, 
+            AND F.FACILITY_NO NOT IN (SELECT ACC_NO FROM [10.10.4.12].SMIDWHARIUM.dbo.PBK_DEBTOR_EXCLUDE)
+            AND A.PBK_EOD_DATE <= (
+                SELECT MAX(Tanggal_Data)
+                FROM [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02
+            )
+
+        GROUP BY
+            A.PBK_EOD_DATE,
+            A.CUSTOMER_ID,
+            A.CUST_NAME,
             D02.Nomor_Identitas_Badan_Usaha
 
-        UNION ALL
 
-        -- SYARIAH
+        -----------------------------------------
+        UNION ALL
+        -----------------------------------------
+
+        -----------------------------------------
+        --               SYARIAH
+        -----------------------------------------
         SELECT
             A.[EOD DATE] AS PBK_EOD_DATE,
             A.ID AS CUSTOMER_ID,
             A.[NAME 1] AS CUST_NAME,
             D02.Nomor_Identitas_Badan_Usaha,
             'Active' AS CUSTOMER_STATUS
+
         FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER A
+
         LEFT JOIN [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02 D02
             ON YEAR(A.[EOD DATE]) = YEAR(D02.Tanggal_Data)
-           AND MONTH(DATEADD(MONTH, -1, A.[EOD DATE])) = MONTH(D02.Tanggal_Data)
+           AND MONTH(A.[EOD DATE]) = MONTH(D02.Tanggal_Data)
            AND A.ID = D02.[Nomor_CIF Debitur]
+
         LEFT JOIN (
             SELECT DISTINCT [CUSTOMER ID], STATUS, [EOD DATE]
             FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_LD_LOANS_AND_DEPOSITS
-        ) B ON A.ID = B.[CUSTOMER ID] AND A.[EOD DATE] = B.[EOD DATE]
-        WHERE 
+        ) B
+            ON A.ID = B.[CUSTOMER ID]
+           AND A.[EOD DATE] = B.[EOD DATE]
+
+        WHERE
             A.[EOD DATE] = (
-                SELECT 
-                    COALESCE(
-                        MAX([EOD DATE]),
-                        (SELECT MAX([EOD DATE]) 
-                         FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER)
-                    )
+                SELECT MAX([EOD DATE])
                 FROM [10.10.4.12].SMIDWHTEMENOS.dbo.T24_CUSTOMER
-                WHERE @periode IS NULL OR CONVERT(CHAR(6), [EOD DATE], 112) = @periode
+                WHERE @periode IS NULL
+                   OR CONVERT(CHAR(6), [EOD DATE], 112) = @periode
             )
-          AND STATUS = 'CUR'
+            AND A.[EOD DATE] <= (
+                SELECT MAX(Tanggal_Data)
+                FROM [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02
+            )
+            AND STATUS = 'CUR'
     )
     """
+
+@app.route('/api/maxslik', methods=['GET'])
+def api_maxslik():
+    try:
+        with get_db_connection() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT CONVERT(CHAR(6), MAX(Tanggal_Data), 112) FROM [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02")
+            maxslik = cursor.fetchone()[0]
+        return jsonify({'success': True, 'maxslik': maxslik})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 # Data NPWP Debitur Aktif per Periode
 @app.route('/data-debitur-aktif', methods=['GET'])
@@ -3938,21 +4111,36 @@ def data_debitur_aktif_page():
             
 @app.route('/api/data-debitur-aktif', methods=['GET'])
 def api_data_debitur_aktif_page():
-    """
-    Endpoint untuk menampilkan data debitur aktif (gabungan konvensional & syariah)
-    dengan filter periode (YYYYMM), pagination, dan limit.
-    Query params: periode, page, page_size
-    """
     try:
         periode = request.args.get('periode')  # contoh: 202510
         page = max(int(request.args.get('page', 1)), 1)
         page_size = min(int(request.args.get('page_size', 50)), 1000)
         offset = (page - 1) * page_size
 
-        # Ambil CTE dengan parameter periode
+        # ==========================
+        # Ambil MAXSLIK dari FORM_D02
+        # ==========================
+        with get_db_connection() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT CONVERT(CHAR(6), MAX(Tanggal_Data), 112) FROM [10.10.4.12].SMIDWH_REPSLIK.dbo.FORM_D02")
+            maxslik = cursor.fetchone()[0]
+
+        # Jika periode > maxslik → langsung balikan 0 data
+        if periode and periode > maxslik:
+            return jsonify({
+                'success': True,
+                'data': [],
+                'total': 0,
+                'page': page,
+                'page_size': page_size,
+                'reason': 'periode_gt_maxslik'
+            })
+
+        # ==========================
+        # Build CTE query
+        # ==========================
         cte_query = get_tax_cte()
 
-        # ==== Query Count ====
+        # Query COUNT
         query_count = f"""
             DECLARE @periode CHAR(6) = ?;
             {cte_query}
@@ -3961,7 +4149,7 @@ def api_data_debitur_aktif_page():
             WHERE CUSTOMER_STATUS = 'Active';
         """
 
-        # ==== Query Data ====
+        # Query Data
         query_data = f"""
             DECLARE @periode CHAR(6) = ?;
             {cte_query}
@@ -3972,12 +4160,11 @@ def api_data_debitur_aktif_page():
             OFFSET ? ROWS FETCH NEXT ? ROWS ONLY;
         """
 
+        # Eksekusi query
         with get_db_connection() as conn, conn.cursor() as cursor:
-            # Hitung total dulu
             cursor.execute(query_count, [periode])
             total = cursor.fetchone()[0]
 
-            # Ambil data sesuai pagination
             cursor.execute(query_data, [periode, offset, page_size])
             columns = [col[0] for col in cursor.description]
             data = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -3987,7 +4174,8 @@ def api_data_debitur_aktif_page():
             'data': data,
             'total': total,
             'page': page,
-            'page_size': page_size
+            'page_size': page_size,
+            'maxslik': maxslik
         })
 
     except Exception as e:
@@ -4005,7 +4193,23 @@ def api_download_data_debitur_aktif_page():
     try:
         periode = request.json.get('periode')  # contoh: "202511" atau None
 
-        # Gunakan versi query dengan deklarasi variabel @periode
+        # ==========================
+        # Ambil MAXSLIK
+        # ==========================
+        with get_db_connection() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT CONVERT(CHAR(6), MAX(Tanggal_Data), 112) FROM SMIDWH_REPSLIK..FORM_D02")
+            maxslik = cursor.fetchone()[0]
+
+        # Jika periode > maxslik → tidak boleh download
+        if periode and periode > maxslik:
+            return jsonify({
+                'success': False,
+                'message': f'Tidak ada data untuk periode di atas MAXSLIK ({maxslik}).'
+            })
+
+        # ==========================
+        # Query data utama
+        # ==========================
         query = f"""
             DECLARE @periode CHAR(6) = ?;
             {get_tax_cte()}
@@ -4015,21 +4219,26 @@ def api_download_data_debitur_aktif_page():
             ORDER BY CUSTOMER_ID;
         """
 
-        # --- Eksekusi query ---
         with get_db_connection() as conn, conn.cursor() as cursor:
             cursor.execute(query, [periode])
             rows = cursor.fetchall()
             columns = [col[0] for col in cursor.description]
 
-        # --- Buat Workbook Excel ---
+        # ==========================
+        # Buat file Excel
+        # ==========================
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Debitur Aktif"
         ws.append(columns)
         ws.freeze_panes = "A2"
 
-        thin = Border(left=Side(style='thin'), right=Side(style='thin'),
-                      top=Side(style='thin'), bottom=Side(style='thin'))
+        thin = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
 
         # Isi data
         for row in rows:
@@ -4047,7 +4256,7 @@ def api_download_data_debitur_aktif_page():
                     max_len = max(max_len, len(str(cell.value)))
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 50)
 
-        # Simpan ke stream
+        # Simpan stream
         output = BytesIO()
         wb.save(output)
         output.seek(0)
