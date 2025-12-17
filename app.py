@@ -25,6 +25,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 from io import BytesIO
 from dateutil import parser
+from devtools import debug
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
@@ -82,20 +83,49 @@ served_final_status = {}
 conn = get_db_connection()
 cur = conn.cursor()
 
+def clean_data_for_sql(data):
+    """Clean data before SQL insertion"""
+    if isinstance(data, pd.DataFrame):
+        # Replace NaN with None
+        data = data.replace({np.nan: None, pd.NaT: None})
+        
+        # Convert problematic columns
+        for col in data.columns:
+            # Handle numeric columns
+            if data[col].dtype in ['float64', 'float32']:
+                # Round to reasonable precision (adjust as needed)
+                data[col] = data[col].round(2)
+                # Replace inf with None
+                data[col] = data[col].replace([np.inf, -np.inf], None)
+            
+            # Clean string columns that might contain numeric data
+            elif data[col].dtype == 'object':
+                # Replace empty strings with None for potential numeric fields
+                data[col] = data[col].replace('', None)
+                data[col] = data[col].replace('nan', None)
+    
+    return data
+
 def try_parse_upload_date(uploadDate):
-    # Coba format "29 July 2025, 16:26"
+    # Format: "29 July 2025, 16:26"
     try:
         return datetime.strptime(uploadDate, "%d %B %Y, %H:%M")
     except ValueError:
         pass
 
-    # Coba format "2025-07-29 17:41:57"
+    # Format: "2025-07-29 17:41:57"
     try:
         return datetime.strptime(uploadDate, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         pass
 
-    # Coba format dari JS new Date().toLocaleString('id-ID') => "29/7/2025, 17.29.35"
+    # Format dengan microseconds: "2025-12-04 17:06:16.627000"
+    try:
+        return datetime.strptime(uploadDate, "%Y-%m-%d %H:%M:%S.%f")
+    except ValueError:
+        pass
+
+    # Format dari JS locale: "29/7/2025, 17.29.35"
     try:
         return datetime.strptime(uploadDate, "%d/%m/%Y, %H.%M.%S")
     except ValueError:
@@ -1337,7 +1367,6 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                                 "redirect_url": "/upload-big-size"
                             }
                     elif 'individual' in data and isinstance(data['individual'], dict) and data['individual'].get('posisiDataTerakhir'):
-                        print(f"Processing individual data for file {idx}")
                         data_individual = data['individual']
                         posisiDataTerakhir = data_individual['posisiDataTerakhir']
                         json_paramPencarian = data_individual.get('parameterPencarian', {})
@@ -1424,17 +1453,21 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         
                         # Insert data ke database dengan pengecekan yang konsisten
                         if json_individual:
-                            insert_data(cur, "slik_perusahaan", json_individual, columns_to_remove, extra_columns=extra)
+                            json_individual_clean = clean_data_for_sql(pd.DataFrame([json_individual])).to_dict('records')[0]
+                            insert_data(cur, "slik_perusahaan", json_individual_clean, columns_to_remove, extra_columns=extra)
 
                         if json_paramPencarian:
-                            insert_data(cur, "slik_parameter_pencarian", json_paramPencarian, columns_to_remove, extra_columns=extra)
+                            json_paramPencarian_clean = clean_data_for_sql(pd.DataFrame([json_paramPencarian])).to_dict('records')[0]
+                            insert_data(cur, "slik_parameter_pencarian", json_paramPencarian_clean, columns_to_remove, extra_columns=extra)
 
                         if json_dpdebitur:
                             for item in json_dpdebitur:
-                                insert_data(cur, "slik_data_pokok_debitur", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_data_pokok_debitur", item_clean, columns_to_remove, extra_columns=extra)
 
                         if json_rFasilitas:
-                            insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas, columns_to_remove, extra_columns=extra)
+                            json_rFasilitas_clean = clean_data_for_sql(pd.DataFrame([json_rFasilitas])).to_dict('records')[0]
+                            insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas_clean, columns_to_remove, extra_columns=extra)
                         
                         if len(uploaded_files) > 1:
                         # table_data_6 = uploaded_data_6.to_html(classes="table table-striped", index=False)
@@ -1451,7 +1484,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas Kredit Pembiayaan
                         if json_fKreditPembiayan:
                             for item in json_fKreditPembiayan:
-                                insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan)
                             uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
@@ -1462,7 +1496,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas LC
                         if json_fLC:
                             for item in json_fLC:
-                                insert_data(cur, "slik_fasilitas_lc", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_lc", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_7 = pd.DataFrame(json_fLC)
                             uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
@@ -1473,7 +1508,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas Garansi
                         if json_fGaransi:
                             for item in json_fGaransi:
-                                insert_data(cur, "slik_fasilitas_garansi", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_garansi", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_8 = pd.DataFrame(json_fGaransi)
                             uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
@@ -1484,7 +1520,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas Lainnya
                         if json_fFasilitasLain:
                             for item in json_fFasilitasLain:
-                                insert_data(cur, "slik_fasilitas_lainnya", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_lainnya", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                             uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
@@ -1529,31 +1566,37 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         }
                         
                         if json_perusahaan:
+                            json_perusahaan_clean = clean_data_for_sql(pd.DataFrame([json_perusahaan])).to_dict('records')[0]
                             insert_data(cur, "slik_perusahaan", {
-                                "nomorLaporan": json_perusahaan.get("nomorLaporan"),
-                                "posisiDataTerakhir": json_perusahaan.get("posisiDataTerakhir"),
-                                "tanggalPermintaan": json_perusahaan.get("tanggalPermintaan")
+                                "nomorLaporan": json_perusahaan_clean.get("nomorLaporan"),
+                                "posisiDataTerakhir": json_perusahaan_clean.get("posisiDataTerakhir"),
+                                "tanggalPermintaan": json_perusahaan_clean.get("tanggalPermintaan")
                             }, extra_columns=extra)
 
                         if json_paramPencarian:
-                            insert_data(cur, "slik_parameter_pencarian", json_paramPencarian, columns_to_remove, extra_columns=extra)
+                            json_paramPencarian_clean = clean_data_for_sql(pd.DataFrame([json_paramPencarian])).to_dict('records')[0]
+                            insert_data(cur, "slik_parameter_pencarian", json_paramPencarian_clean, columns_to_remove, extra_columns=extra)
 
                         if json_dpdebitur:
                             for item in json_dpdebitur:
-                                insert_data(cur, "slik_data_pokok_debitur", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_data_pokok_debitur", item_clean, columns_to_remove, extra_columns=extra)
 
                         if json_kPengurusPemilik:
                             for kelompok in json_kPengurusPemilik:
+                                kelompok_clean = clean_data_for_sql(pd.DataFrame([kelompok])).to_dict('records')[0]
                                 for pengurus in kelompok["pengurusPemilik"]:
+                                    pengurus_clean = clean_data_for_sql(pd.DataFrame([pengurus])).to_dict('records')[0]
                                     full_item = {
-                                        "kodeLJK": kelompok["kodeLJK"],
-                                        "namaLJK": kelompok["namaLJK"],
-                                        **pengurus
+                                        "kodeLJK": kelompok_clean["kodeLJK"],
+                                        "namaLJK": kelompok_clean["namaLJK"],
+                                        **pengurus_clean
                                     }
                                     insert_data(cur, "slik_kelompok_pengurus_pemilik", full_item, columns_to_remove, extra_columns=extra)
 
                         if json_rFasilitas:
-                            insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas, columns_to_remove, extra_columns=extra)
+                            json_rFasilitas_clean = clean_data_for_sql(pd.DataFrame([json_rFasilitas])).to_dict('records')[0]
+                            insert_data(cur, "slik_ringkasan_fasilitas", json_rFasilitas_clean, columns_to_remove, extra_columns=extra)
                             
                         if len(uploaded_files) > 1:
                             all_uploaded_data.append(uploaded_data_2)
@@ -1567,7 +1610,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         
                         if json_fKreditPembiayan:
                             for item in json_fKreditPembiayan:
-                                insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_kredit_pembiayaan", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_6 = pd.DataFrame(json_fKreditPembiayan)
                             uploaded_data_6.drop(columns=[col for col in columns_to_remove if col in uploaded_data_6.columns], inplace=True)
@@ -1578,7 +1622,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas LC
                         if json_fLC:
                             for item in json_fLC:
-                                insert_data(cur, "slik_fasilitas_lc", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_lc", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_7 = pd.DataFrame(json_fLC)
                             uploaded_data_7.drop(columns=[col for col in columns_to_remove if col in uploaded_data_7.columns], inplace=True)
@@ -1589,7 +1634,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas Garansi
                         if json_fGaransi:
                             for item in json_fGaransi:
-                                insert_data(cur, "slik_fasilitas_garansi", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_garansi", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_8 = pd.DataFrame(json_fGaransi)
                             uploaded_data_8.drop(columns=[col for col in columns_to_remove if col in uploaded_data_8.columns], inplace=True)
@@ -1600,7 +1646,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Fasilitas Lainnya
                         if json_fFasilitasLain:
                             for item in json_fFasilitasLain:
-                                insert_data(cur, "slik_fasilitas_lainnya", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_lainnya", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_9 = pd.DataFrame(json_fFasilitasLain)
                             uploaded_data_9.drop(columns=[col for col in columns_to_remove if col in uploaded_data_9.columns], inplace=True)
@@ -1611,7 +1658,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         # Surat Berharga
                         if json_fSuratBerharga:
                             for item in json_fSuratBerharga:
-                                insert_data(cur, "slik_fasilitas_surat_berharga", item, columns_to_remove, extra_columns=extra)
+                                item_clean = clean_data_for_sql(pd.DataFrame([item])).to_dict('records')[0]
+                                insert_data(cur, "slik_fasilitas_surat_berharga", item_clean, columns_to_remove, extra_columns=extra)
 
                             uploaded_data_10 = pd.DataFrame(json_fSuratBerharga)
                             uploaded_data_10.drop(columns=[col for col in columns_to_remove if col in uploaded_data_10.columns], inplace=True)
@@ -1657,10 +1705,34 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
         if len(list_uploaded_data_6) > 0:
             missing_ljk = [i for i, df in enumerate(list_uploaded_data_6) if 'ljk' not in df.columns]
             if not missing_ljk:
-                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor', 'pelaporKet'])
                 combined_data_6 = pd.concat(list_uploaded_data_6, ignore_index=True)
-                merged_fKP = combined_data_6.merge(uploaded_data_4, left_on='ljk', right_on='pelapor', how='left')
-            
+                merged_fKP = combined_data_6.merge(
+                    uploaded_data_4,
+                    left_on=['ljk', 'ljkKet'],
+                    right_on=['pelapor', 'pelaporKet'],
+                    how='left'
+                )
+                
+                if 'npwp' in merged_fKP.columns and 'noIdentitas' in merged_fKP.columns:
+                    if 'individual' in data:
+                        # Untuk individual: prioritas noIdentitas, fallback ke npwp
+                        merged_fKP['npwp'] = merged_fKP.apply(
+                            lambda row: row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' 
+                                    else (row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' else None),
+                            axis=1
+                        )
+                    elif 'perusahaan' in data:
+                        # Untuk perusahaan: prioritas npwp, fallback ke noIdentitas
+                        merged_fKP['npwp'] = merged_fKP.apply(
+                            lambda row: row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' 
+                                    else (row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' else None),
+                            axis=1
+                        )
+                elif 'noIdentitas' in merged_fKP.columns and 'npwp' not in merged_fKP.columns:
+                    # Jika hanya ada noIdentitas, rename ke npwp
+                    merged_fKP = merged_fKP.rename(columns={'noIdentitas': 'npwp'})
+                
                 # ACTIVE FACILITY (Kondisi == '00')
                 active_fKP = merged_fKP[merged_fKP['kondisi'].isin(['00', '03', '13', '16'])]
             
@@ -1685,6 +1757,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Filter kolom yang ada
                     available_columns = [col for col in columns if col in active_fKP.columns]
                     active_facility_1 = active_fKP[available_columns].copy()
+                    active_facility_1 = clean_data_for_sql(active_facility_1)
                     
                     # Tambahkan kolom metadata
                     active_facility_1['periodeData'] = json_posisiDataTerakhir
@@ -1754,8 +1827,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             summary_data[target_col] = None
                     
                     # Konversi NaN ke None untuk semua DataFrame
-                    summary_data = summary_data.replace({np.nan: None})
-                    active_facility_1 = active_facility_1.replace({np.nan: None})
+                    summary_data = clean_data_for_sql(summary_data)
                     
                     # Insert data summary
                     try:
@@ -1785,9 +1857,9 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                             VALUES ({placeholders})
                         """
                         
-                        data = list(active_facility_1.itertuples(index=False, name=None))
-                        if data:
-                            cur.executemany(query, data)
+                        data_insert = list(active_facility_1.itertuples(index=False, name=None))  # ← GANTI NAMA
+                        if data_insert:  # ← GANTI NAMA
+                            cur.executemany(query, data_insert)  # ← GANTI NAMA
                             print("Data aktif berhasil di-insert!")
                         else:
                             print("Data fasilitas aktif kosong!")
@@ -1826,6 +1898,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
 
                 available_columns_closed = [col for col in columns_closed if col in closed_fKP.columns]
                 closed_facility_1 = closed_fKP[available_columns_closed].copy()
+                closed_facility_1 = clean_data_for_sql(closed_facility_1)
                 rename_dict_closed = {
                     'namaDebitur': 'Nama Debitur/Calon Debitur',
                     'npwp': 'Nomor Identitas',
@@ -1873,11 +1946,11 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     VALUES ({placeholders})
                 """
                 # Ubah DataFrame ke list of tuple tanpa index
-                data = list(closed_facility_1.itertuples(index=False, name=None))
-                
+                data_closed = list(closed_facility_1.itertuples(index=False, name=None))  # ← GANTI NAMA
+
                 # Jalankan batch insert
-                if data:
-                    cur.executemany(query, data)
+                if data_closed:  # ← GANTI NAMA
+                    cur.executemany(query, data_closed)  # ← GANTI NAMA
                 else:
                     print("Data kosong!")
                 
@@ -1914,7 +1987,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Siapkan DataFrame untuk disimpan ke database
                     available_cols = [col for col in base_columns if col in df_filtered.columns]
                     result_df = df_filtered[available_cols].copy()
-                    
+                    result_df = clean_data_for_sql(result_df)
+                
                     result_df['periodeData'] = json_posisiDataTerakhir
                     result_df['username'] = username
                     result_df['namaFileUpload'] = nama_file
@@ -1925,12 +1999,13 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         columns = ', '.join(result_df.columns)
                         placeholders = ', '.join(['?'] * len(result_df.columns))
                         query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                        data = list(result_df.itertuples(index=False, name=None))
-                        cur.executemany(query, data)
+                        data_insert = list(result_df.itertuples(index=False, name=None))
+                        cur.executemany(query, data_insert)
                     
                     # Tambahkan ke tabel summary jika diperlukan
                     if summary_table and not result_df.empty:
                         summary_data = result_df.copy()
+                        summary_data = clean_data_for_sql(summary_data)
                         summary_data['nomorLaporan'] = nomor_laporan
                         summary_data.rename(columns={
                             'namaDebitur': 'namaDebitur',
@@ -1984,9 +2059,33 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     return display_df.to_html(classes="table table-striped", index=False)
                 
                 # Deduplicate dan gabungkan data
-                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor', 'pelaporKet'])
                 combined_data_7 = pd.concat(list_uploaded_data_7, ignore_index=True)
-                merged_fLC = combined_data_7.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
+                merged_fLC = combined_data_7.merge(
+                    uploaded_data_4_dedup,
+                    left_on=['ljk', 'ljkKet'],
+                    right_on=['pelapor', 'pelaporKet'],
+                    how='left'
+                )
+                
+                if 'npwp' in merged_fLC.columns and 'noIdentitas' in merged_fLC.columns:
+                    if 'individual' in data:
+                        # Untuk individual: prioritas noIdentitas, fallback ke npwp
+                        merged_fLC['npwp'] = merged_fLC.apply(
+                            lambda row: row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' 
+                                    else (row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' else None),
+                            axis=1
+                        )
+                    elif 'perusahaan' in data:
+                        # Untuk perusahaan: prioritas npwp, fallback ke noIdentitas
+                        merged_fLC['npwp'] = merged_fLC.apply(
+                            lambda row: row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' 
+                                    else (row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' else None),
+                            axis=1
+                        )
+                elif 'noIdentitas' in merged_fLC.columns and 'npwp' not in merged_fLC.columns:
+                    # Jika hanya ada noIdentitas, rename ke npwp
+                    merged_fLC = merged_fLC.rename(columns={'noIdentitas': 'npwp'})
                 
                 # Proses fasilitas aktif
                 active_fLC = merged_fLC[merged_fLC['kondisi'].isin(['00', '03', '13', '16'])]
@@ -2029,6 +2128,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Siapkan DataFrame untuk disimpan ke database
                     available_cols = [c for c in base_columns if c in df_filtered.columns]
                     result_df = df_filtered[available_cols].copy()
+                    result_df = clean_data_for_sql(result_df)
                     
                     result_df['periodeData'] = json_posisiDataTerakhir
                     result_df['username'] = username
@@ -2040,8 +2140,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         columns = ', '.join(result_df.columns)
                         placeholders = ', '.join(['?'] * len(result_df.columns))
                         query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                        data = list(result_df.itertuples(index=False, name=None))
-                        cur.executemany(query, data)
+                        data_insert = list(result_df.itertuples(index=False, name=None))
+                        cur.executemany(query, data_insert)
                     else:
                         print("Data kosong!")
                     
@@ -2050,6 +2150,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         summary_data = result_df[[
                             'namaDebitur', 'npwp', 'ljkKet', 'jenisGaransiKet', 'kualitas', 'kualitasKet'
                         ]].copy()
+                        summary_data = clean_data_for_sql(summary_data)
                         
                         summary_data['periodeData'] = json_posisiDataTerakhir
                         summary_data['username'] = username
@@ -2118,9 +2219,33 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     return display_df.to_html(classes="table table-striped", index=False)
                 
                 # Persiapan data
-                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor', 'pelaporKet'])
                 combined_data_8 = pd.concat(list_uploaded_data_8, ignore_index=True)
-                merged_fGar = combined_data_8.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
+                merged_fGar = combined_data_8.merge(
+                    uploaded_data_4_dedup,
+                    left_on=['ljk', 'ljkKet'],
+                    right_on=['pelapor', 'pelaporKet'],
+                    how='left'
+                )
+                
+                if 'npwp' in merged_fGar.columns and 'noIdentitas' in merged_fGar.columns:
+                    if 'individual' in data:
+                        # Untuk individual: prioritas noIdentitas, fallback ke npwp
+                        merged_fGar['npwp'] = merged_fGar.apply(
+                            lambda row: row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' 
+                                    else (row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' else None),
+                            axis=1
+                        )
+                    elif 'perusahaan' in data:
+                        # Untuk perusahaan: prioritas npwp, fallback ke noIdentitas
+                        merged_fGar['npwp'] = merged_fGar.apply(
+                            lambda row: row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' 
+                                    else (row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' else None),
+                            axis=1
+                        )
+                elif 'noIdentitas' in merged_fGar.columns and 'npwp' not in merged_fGar.columns:
+                    # Jika hanya ada noIdentitas, rename ke npwp
+                    merged_fGar = merged_fGar.rename(columns={'noIdentitas': 'npwp'})
                 
                 # Proses fasilitas aktif
                 active_fGar = merged_fGar[merged_fGar['kodeKondisi'].isin(['00', '03', '13', '16'])]
@@ -2162,6 +2287,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Siapkan DataFrame untuk disimpan ke database
                     available_cols = [c for c in base_columns if c in df_filtered.columns]
                     result_df = df_filtered[available_cols].copy()
+                    result_df = clean_data_for_sql(result_df)
                     
                     # Tambahkan kolom metadata
                     metadata_columns = {
@@ -2179,8 +2305,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         columns = ', '.join(result_df.columns)
                         placeholders = ', '.join(['?'] * len(result_df.columns))
                         query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                        data = list(result_df.itertuples(index=False, name=None))
-                        cur.executemany(query, data)
+                        data_insert = list(result_df.itertuples(index=False, name=None))
+                        cur.executemany(query, data_insert)
                     else:
                         print("Data kosong!")
                     
@@ -2192,6 +2318,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         ]
                         
                         summary_data = result_df[summary_base].copy()
+                        summary_data = clean_data_for_sql(summary_data)
                         
                         # Tambah metadata dan nomor laporan
                         for col, val in metadata_columns.items():
@@ -2260,11 +2387,33 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     return display_df.to_html(classes="table table-striped", index=False)
                 
                 # Persiapan data
-                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor', 'pelaporKet'])
                 combined_data_9 = pd.concat(list_uploaded_data_9, ignore_index=True)
-                merged_fLain = combined_data_9.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
+                merged_fLain = combined_data_9.merge(
+                    uploaded_data_4_dedup,
+                    left_on=['ljk', 'ljkKet'],
+                    right_on=['pelapor', 'pelaporKet'],
+                    how='left'
+                )
                 
-                print(merged_fLain)
+                if 'npwp' in merged_fLain.columns and 'noIdentitas' in merged_fLain.columns:
+                    if 'individual' in data:
+                        # Untuk individual: prioritas noIdentitas, fallback ke npwp
+                        merged_fLain['npwp'] = merged_fLain.apply(
+                            lambda row: row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' 
+                                    else (row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' else None),
+                            axis=1
+                        )
+                    elif 'perusahaan' in data:
+                        # Untuk perusahaan: prioritas npwp, fallback ke noIdentitas
+                        merged_fLain['npwp'] = merged_fLain.apply(
+                            lambda row: row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' 
+                                    else (row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' else None),
+                            axis=1
+                        )
+                elif 'noIdentitas' in merged_fLain.columns and 'npwp' not in merged_fLain.columns:
+                    # Jika hanya ada noIdentitas, rename ke npwp
+                    merged_fLain = merged_fLain.rename(columns={'noIdentitas': 'npwp'})
                 
                 # Proses fasilitas aktif
                 active_fLain = merged_fLain[merged_fLain['kodeKondisi'].isin(['00', '03', '13', '16'])]
@@ -2285,9 +2434,33 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
             missing_ljk = [i for i, df in enumerate(list_uploaded_data_10) if 'ljk' not in df.columns]
             if not missing_ljk:
                 # 1. Data preparation
-                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor'])
+                uploaded_data_4_dedup = uploaded_data_4.drop_duplicates(subset=['pelapor', 'pelaporKet'])
                 combined_data_10 = pd.concat(list_uploaded_data_10, ignore_index=True)
-                merged_fSB = combined_data_10.merge(uploaded_data_4_dedup, left_on='ljk', right_on='pelapor', how='left')
+                merged_fSB = combined_data_10.merge(
+                    uploaded_data_4_dedup,
+                    left_on=['ljk', 'ljkKet'],
+                    right_on=['pelapor', 'pelaporKet'],
+                    how='left'
+                )
+                
+                if 'npwp' in merged_fSB.columns and 'noIdentitas' in merged_fSB.columns:
+                    if 'individual' in data:
+                        # Untuk individual: prioritas noIdentitas, fallback ke npwp
+                        merged_fSB['npwp'] = merged_fSB.apply(
+                            lambda row: row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' 
+                                    else (row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' else None),
+                            axis=1
+                        )
+                    elif 'perusahaan' in data:
+                        # Untuk perusahaan: prioritas npwp, fallback ke noIdentitas
+                        merged_fSB['npwp'] = merged_fSB.apply(
+                            lambda row: row['npwp'] if pd.notna(row['npwp']) and str(row['npwp']).strip() != '' 
+                                    else (row['noIdentitas'] if pd.notna(row['noIdentitas']) and str(row['noIdentitas']).strip() != '' else None),
+                            axis=1
+                        )
+                elif 'noIdentitas' in merged_fSB.columns and 'npwp' not in merged_fSB.columns:
+                    # Jika hanya ada noIdentitas, rename ke npwp
+                    merged_fSB = merged_fSB.rename(columns={'noIdentitas': 'npwp'})
                 
                 # 2. Definisi pemetaan nama kolom untuk output
                 column_rename_map = {
@@ -2347,6 +2520,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                     # Ambil data sesuai kolom yang dibutuhkan
                     available_cols = [c for c in columns if c in df.columns]
                     facility_data = df[available_cols].copy()
+                    facility_data = clean_data_for_sql(facility_data)
                     
                     # Tambahkan kolom informasi
                     facility_data['periodeData'] = json_posisiDataTerakhir
@@ -2394,6 +2568,7 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                 
                 if active_facility_5.shape[0] > 0:
                     summary_data = active_facility_5[summary_columns].copy()
+                    summary_data = clean_data_for_sql(summary_data)
                     summary_data['periodeData'] = json_posisiDataTerakhir
                     summary_data['username'] = username
                     summary_data['namaFileUpload'] = nama_file
@@ -3309,9 +3484,6 @@ def api_upload_data():
         })
         
     except Exception as e:
-        import traceback
-        print(f"Error in api_upload_data: {str(e)}")
-        print(traceback.format_exc())
         return jsonify({
             "draw": int(request.args.get('draw', 1)),
             "recordsTotal": 0,
