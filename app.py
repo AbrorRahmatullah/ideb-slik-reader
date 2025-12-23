@@ -26,6 +26,7 @@ from werkzeug.utils import secure_filename
 from io import BytesIO
 from dateutil import parser
 from devtools import debug
+from collections import defaultdict
 
 from config.database import get_db_connection
 from functions.popup_notification import render_alert
@@ -79,9 +80,145 @@ UPLOAD_BASE_DIR = "uploads"
 task_queue = queue.Queue()
 task_results = {}
 task_progress = {}
+
+# Thread-safe locks
+task_progress_lock = threading.Lock()
+task_id_registry_lock = threading.Lock()
+
+# Task ID registry to prevent reuse
+task_id_registry = {}  # Format: {task_id: {'created_at': timestamp, 'username': str, 'filename': str, 'status': str}}
+active_uploads = defaultdict(set)  # Format: {username: set(task_ids)}
+
 served_final_status = {}
 conn = get_db_connection()
 cur = conn.cursor()
+
+def cleanup_old_tasks():
+    """Remove old completed tasks from memory with proper validation"""
+    
+    def cleanup_worker():
+        while True:
+            try:
+                current_time = time.time()
+                
+                # Configuration
+                CLEANUP_DELAY_COMPLETED = 300  # 5 minutes after completion
+                CLEANUP_DELAY_ERROR = 300      # 5 minutes after error
+                CLEANUP_DELAY_STALE = 3600     # 1 hour for stale tasks
+                REGISTRY_RETENTION = 7200      # 2 hours in registry before removal
+                
+                # Clean up task_progress
+                tasks_to_remove = []
+                
+                with task_progress_lock:
+                    for task_id, progress in list(task_progress.items()):
+                        try:
+                            status = progress.get('status', 'processing')
+                            progress_value = progress.get('progress', 0)
+                            timestamp = progress.get('timestamp', current_time)
+                            
+                            # Check if task should be cleaned
+                            should_cleanup = False
+                            reason = ""
+                            
+                            # Completed tasks - wait 5 minutes
+                            if status == 'completed' and progress_value >= 100:
+                                if current_time - timestamp > CLEANUP_DELAY_COMPLETED:
+                                    should_cleanup = True
+                                    reason = "completed and aged"
+                            
+                            # Error tasks - wait 5 minutes
+                            elif status == 'error':
+                                if current_time - timestamp > CLEANUP_DELAY_ERROR:
+                                    should_cleanup = True
+                                    reason = "error and aged"
+                            
+                            # Stale processing tasks (stuck) - wait 1 hour
+                            elif status == 'processing':
+                                if current_time - timestamp > CLEANUP_DELAY_STALE:
+                                    should_cleanup = True
+                                    reason = "stale/stuck processing"
+                                    # Mark as error in registry
+                                    mark_task_error(task_id)
+                            
+                            if should_cleanup:
+                                tasks_to_remove.append((task_id, reason))
+                        
+                        except Exception as e:
+                            app.logger.error(f"Error checking task {task_id}: {e}")
+                
+                # Remove tasks from memory
+                for task_id, reason in tasks_to_remove:
+                    with task_progress_lock:
+                        removed_progress = task_progress.pop(task_id, None)
+                    
+                    with task_progress_lock:
+                        task_results.pop(task_id, None)
+                    
+                    if removed_progress:
+                        app.logger.info(f"🧹 Cleaned task {task_id} from memory (reason: {reason})")
+                
+                # Clean up old entries from registry (keep for 2 hours for audit)
+                registry_to_remove = []
+                
+                with task_id_registry_lock:
+                    for task_id, info in list(task_id_registry.items()):
+                        created_at = info.get('created_at', current_time)
+                        status = info.get('status', 'active')
+                        
+                        # Remove old completed/error entries from registry
+                        if status in ['completed', 'error']:
+                            completion_time = info.get('completed_at') or info.get('error_at', created_at)
+                            if current_time - completion_time > REGISTRY_RETENTION:
+                                registry_to_remove.append(task_id)
+                        
+                        # Remove very old active entries (shouldn't happen, but safety net)
+                        elif status == 'active':
+                            if current_time - created_at > CLEANUP_DELAY_STALE:
+                                registry_to_remove.append(task_id)
+                
+                # Remove from registry
+                for task_id in registry_to_remove:
+                    with task_id_registry_lock:
+                        removed_info = task_id_registry.pop(task_id, None)
+                        
+                        # Clean up from active_uploads
+                        if removed_info:
+                            username = removed_info.get('username')
+                            if username and task_id in active_uploads[username]:
+                                active_uploads[username].discard(task_id)
+                        
+                        if removed_info:
+                            app.logger.info(f"🧹 Cleaned task {task_id} from registry")
+                
+                # Log statistics
+                with task_progress_lock:
+                    progress_count = len(task_progress)
+                
+                with task_id_registry_lock:
+                    registry_count = len(task_id_registry)
+                    active_count = sum(1 for info in task_id_registry.values() if info['status'] == 'active')
+                
+                if tasks_to_remove or registry_to_remove:
+                    app.logger.info(
+                        f"📊 Cleanup stats - Progress: {progress_count}, "
+                        f"Registry: {registry_count} (Active: {active_count}), "
+                        f"Removed: {len(tasks_to_remove)} progress + {len(registry_to_remove)} registry"
+                    )
+                
+                # Sleep for 1 minute before next cleanup
+                time.sleep(60)
+                
+            except Exception as e:
+                app.logger.error(f"❌ Error in cleanup worker: {e}")
+                import traceback
+                app.logger.error(traceback.format_exc())
+                time.sleep(60)  # Continue even on error
+    
+    # Start cleanup thread
+    cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True, name="TaskCleanupWorker")
+    cleanup_thread.start()
+    app.logger.info("✅ Task cleanup worker started")
 
 def clean_data_for_sql(data):
     """Clean data before SQL insertion"""
@@ -135,9 +272,10 @@ def try_parse_upload_date(uploadDate):
 
 # Tambahkan helper function
 def is_allowed_file(filename, mimetype):
+    """Check if file is allowed (.txt and correct MIME type)"""
     return (
-        os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS and
-        mimetype == 'text/plain'
+        filename.lower().endswith('.txt') and 
+        mimetype in ['text/plain', 'application/octet-stream']
     )
     
 def is_txt_file(filename):
@@ -164,12 +302,21 @@ def create_upload_folder(nama_file_upload):
     os.makedirs(upload_path, exist_ok=True)
     return upload_path
 
-def save_file_to_local(file_content, filename, upload_path):
-    """Simpan file ke folder lokal"""
-    file_path = os.path.join(upload_path, filename)
-    with open(file_path, 'wb') as f:
-        f.write(file_content)
-    return file_path
+def save_file_to_local(content, filename, folder_path):
+    """Save file content to local folder"""
+    try:
+        os.makedirs(folder_path, exist_ok=True)
+        file_path = os.path.join(folder_path, filename)
+        
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        app.logger.info(f"📁 Saved file: {file_path}")
+        return file_path
+    
+    except Exception as e:
+        app.logger.error(f"Error saving file {filename}: {e}")
+        raise
 
 # --- Check if file name exists ---
 def check_filename_exists(namaFileUpload):
@@ -233,6 +380,13 @@ def save_file_metadata_to_db_flask(periodeData, namaFileUpload, uploadFolderPath
 
 # --- Background Worker ---
 def process_files_worker():
+    """
+    Background worker yang terintegrasi dengan:
+    - Unique task ID system
+    - Upload session tracking
+    - Thread-safe progress updates
+    - Proper cleanup and error handling
+    """
     while True:
         try:
             task_id, files, user_info = task_queue.get(timeout=1)
@@ -241,8 +395,25 @@ def process_files_worker():
 
         conn = None
         validation_failed = False
+        upload_folder_path = None
 
         try:
+            # ✅ PERBAIKAN 1: Validasi task masih aktif
+            if not is_task_active(task_id):
+                app.logger.warning(f"⚠️ Task {task_id} sudah tidak aktif, skip processing")
+                task_queue.task_done()
+                continue
+            
+            # ✅ PERBAIKAN 2: Log start processing dengan session info
+            with task_id_registry_lock:
+                task_info = task_id_registry.get(task_id, {})
+                upload_session = task_info.get('upload_session')
+            
+            app.logger.info(
+                f"🚀 Worker started - Task: {task_id}, Session: {upload_session}, "
+                f"User: {user_info.get('username')}, File: {user_info.get('nama_file')}"
+            )
+            
             bulan_dict = {
                 1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
                 5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
@@ -258,11 +429,35 @@ def process_files_worker():
             session_npwp = None
             session_identitas = None
 
+            # ✅ PERBAIKAN 3: Update progress dengan helper function
+            update_task_progress(task_id, 5, 'processing', 'Memvalidasi file...')
+
+            # Prepare uploaded files
             for file_data in files:
                 filename = secure_filename(file_data['filename'])
                 mimetype = file_data.get('mimetype', 'text/plain')
+                
                 if not is_allowed_file(filename, mimetype):
-                    raise ValueError(f"File {filename} bukan .txt atau tipe MIME salah.")
+                    error_msg = f"File {filename} bukan .txt atau tipe MIME salah."
+                    
+                    # ✅ PERBAIKAN: Gunakan update_task_progress
+                    update_task_progress(task_id, 0, 'error', error_msg)
+                    
+                    task_results[task_id] = {
+                        'status': 'error',
+                        'message': error_msg,
+                        'error_type': 'validation_error',
+                        'completed': True,
+                        'redirect_url': '/upload-big-size'
+                    }
+                    
+                    # Cleanup dan return
+                    if upload_folder_path and os.path.exists(upload_folder_path):
+                        shutil.rmtree(upload_folder_path)
+                    
+                    mark_task_error(task_id)
+                    task_queue.task_done()
+                    return
 
                 save_file_to_local(file_data['content'], filename, upload_folder_path)
 
@@ -273,8 +468,20 @@ def process_files_worker():
                     content_type=mimetype
                 ))
 
+            # ✅ PERBAIKAN 4: Update progress per validation stage
+            update_task_progress(task_id, 8, 'processing', f'Memvalidasi {len(uploaded_files)} file...')
+
             # Loop untuk validasi semua file dulu
             for idx, uploaded_file in enumerate(uploaded_files):
+                # ✅ Update progress per file
+                file_progress = 8 + int(7 * ((idx + 1) / len(uploaded_files)))
+                update_task_progress(
+                    task_id, 
+                    file_progress, 
+                    'processing', 
+                    f'Memvalidasi file {idx + 1} dari {len(uploaded_files)}...'
+                )
+                
                 file_content = uploaded_file.stream.read()
                 file_processed = False
 
@@ -297,88 +504,81 @@ def process_files_worker():
 
                         if not posisi or not ident:
                             error_msg = f"File {uploaded_file.filename} tidak memiliki data posisi atau identitas."
+                            
+                            # ✅ PERBAIKAN: Gunakan update_task_progress
+                            update_task_progress(task_id, 0, 'error', error_msg)
+                            
                             task_results[task_id] = {
                                 'status': 'error',
                                 'message': error_msg,
-                                'error_type': 'validation_error'
-                            }
-                            task_progress[task_id].update({
-                                'status': 'error',
-                                'progress': 100,
                                 'error_type': 'validation_error',
-                                'message': error_msg
-                            })
+                                'completed': True,
+                                'redirect_url': '/upload-big-size'
+                            }
                             
-                            # ✅ PERBAIKAN: Cleanup folder dan mark task done
-                            try:
-                                if os.path.exists(upload_folder_path):
-                                    shutil.rmtree(upload_folder_path)
-                            except Exception as cleanup_error:
-                                app.logger.error(f"Error hapus folder: {cleanup_error}")
+                            if os.path.exists(upload_folder_path):
+                                shutil.rmtree(upload_folder_path)
                             
-                            # ✅ PERBAIKAN: Jangan return, biarkan flow normal untuk cleanup
-                            break  # keluar dari loop encoding
+                            mark_task_error(task_id)
+                            validation_failed = True
+                            break
 
+                        # Validasi NPWP consistency
                         if ident_key == 'npwp':
                             if session_npwp is None:
                                 session_npwp = ident
                             elif session_npwp != ident:
-                                error_msg = f"NPWP file ke-{idx+1} tidak konsisten dengan file pertama."
+                                error_msg = f"NPWP file ke-{idx+1} ({ident}) tidak konsisten dengan file pertama ({session_npwp})."
+                                
+                                update_task_progress(task_id, 0, 'error', error_msg)
+                                
                                 task_results[task_id] = {
                                     'status': 'error',
                                     'message': error_msg,
-                                    'error_type': 'validation_error'
-                                }
-                                task_progress[task_id].update({
-                                    'status': 'error',
-                                    'progress': 100,
                                     'error_type': 'validation_error',
-                                    'message': error_msg
-                                })
+                                    'completed': True,
+                                    'redirect_url': '/upload-big-size'
+                                }
                                 
-                                # ✅ PERBAIKAN: Cleanup folder
-                                try:
-                                    if os.path.exists(upload_folder_path):
-                                        shutil.rmtree(upload_folder_path)
-                                except Exception as cleanup_error:
-                                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+                                if os.path.exists(upload_folder_path):
+                                    shutil.rmtree(upload_folder_path)
                                 
-                                # ✅ PERBAIKAN: Set flag untuk keluar dari loop utama
+                                mark_task_error(task_id)
                                 validation_failed = True
-                                break  # keluar dari loop encoding
+                                break
+                        
+                        # Validasi Identitas consistency
                         else:
                             if session_identitas is None:
                                 session_identitas = ident
                             elif session_identitas != ident:
-                                error_msg = f"Identitas file ke-{idx+1} tidak konsisten dengan file pertama."
+                                error_msg = f"Identitas file ke-{idx+1} ({ident}) tidak konsisten dengan file pertama ({session_identitas})."
+                                
+                                update_task_progress(task_id, 0, 'error', error_msg)
+                                
                                 task_results[task_id] = {
                                     'status': 'error',
                                     'message': error_msg,
-                                    'error_type': 'validation_error'
-                                }
-                                task_progress[task_id].update({
-                                    'status': 'error',
-                                    'progress': 100,
                                     'error_type': 'validation_error',
-                                    'message': error_msg
-                                })
+                                    'completed': True,
+                                    'redirect_url': '/upload-big-size'
+                                }
                                 
-                                try:
-                                    if os.path.exists(upload_folder_path):
-                                        shutil.rmtree(upload_folder_path)
-                                except Exception as cleanup_error:
-                                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+                                if os.path.exists(upload_folder_path):
+                                    shutil.rmtree(upload_folder_path)
                                 
-                                # task_queue.task_done()
-                                # return
+                                mark_task_error(task_id)
                                 validation_failed = True
                                 break
 
                         # Parse periode data dari posisi
                         date_obj = datetime.strptime(posisi, "%Y%m")
                         periode_data = f"{bulan_dict[date_obj.month]} {date_obj.year}"
-                        if task_id in task_progress and 'temp_metadata' in task_progress[task_id]:
-                            task_progress[task_id]['temp_metadata']['periodeData'] = periode_data
+                        
+                        # ✅ PERBAIKAN: Update metadata dengan thread-safe
+                        with task_progress_lock:
+                            if task_id in task_progress and 'temp_metadata' in task_progress[task_id]:
+                                task_progress[task_id]['temp_metadata']['periodeData'] = periode_data
 
                         file_processed = True
                         break
@@ -396,53 +596,52 @@ def process_files_worker():
                 if not file_processed:
                     error_msg = f"Gagal memproses file: {uploaded_file.filename}"
                     
+                    update_task_progress(task_id, 0, 'error', error_msg)
+                    
                     task_results[task_id] = {
                         "status": "error",
                         "message": error_msg,
-                        "error_type": "validation_error"
+                        "error_type": "validation_error",
+                        "completed": True,
+                        "redirect_url": "/upload-big-size"
                     }
-                    
-                    task_progress[task_id].update({
-                        'status': 'error',
-                        'progress': 100,
-                        'error_type': 'validation_error',
-                        'message': error_msg
-                    })
                     
                     app.logger.error(f"[{task_id}] {error_msg}")
                     
-                    try:
-                        if os.path.exists(upload_folder_path):
-                            shutil.rmtree(upload_folder_path)
-                    except Exception as cleanup_error:
-                        app.logger.error(f"Error hapus folder: {cleanup_error}")
+                    if os.path.exists(upload_folder_path):
+                        shutil.rmtree(upload_folder_path)
                     
+                    mark_task_error(task_id)
                     validation_failed = True
                     break
                 
             if validation_failed:
-                # Task sudah di-set sebagai error di task_results dan task_progress
-                # Langsung mark task done dan return
                 task_queue.task_done()
                 return
             
-            # Validasi selesai, baru insert metadata 1x
+            # ✅ PERBAIKAN 5: Validasi selesai
+            update_task_progress(task_id, 15, 'processing', 'Validasi selesai, menyimpan metadata...')
+            
+            # Insert metadata 1x
             uploaded_at = datetime.now()
             
-            if periode_data and task_id in task_progress:
-                # Update temp_metadata dengan data yang benar
-                task_progress[task_id]['temp_metadata'].update({
+            if periode_data:
+                # ✅ PERBAIKAN: Update metadata dengan format yang konsisten
+                metadata_update = {
                     'periodeData': periode_data,
                     'uploadDate': uploaded_at.strftime('%d %B %Y, %H:%M'),
                     'namaFileUpload': nama_file_upload,
                     'username': user_info.get("username"),
                     'fullname': user_info.get("fullname")
-                })
+                }
                 
-                # Update progress
-                task_progress[task_id]['progress'] = 10
-
+                with task_progress_lock:
+                    if task_id in task_progress:
+                        if 'temp_metadata' not in task_progress[task_id]:
+                            task_progress[task_id]['temp_metadata'] = {}
+                        task_progress[task_id]['temp_metadata'].update(metadata_update)
                 
+                # Save to database
                 save_file_metadata_to_db_flask(
                     periodeData=periode_data,
                     namaFileUpload=nama_file_upload,
@@ -453,99 +652,142 @@ def process_files_worker():
                     uploadDate=uploaded_at
                 )
 
+            # ✅ PERBAIKAN 6: Process files dengan progress tracking yang sudah diperbaiki
+            update_task_progress(task_id, 20, 'processing', 'Memproses file...')
+            
             result = process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at)
 
+            # ✅ PERBAIKAN 7: Handle result dengan proper cleanup
             if isinstance(result, dict) and result.get("error"):
-                # Handle error case
-                if task_id in task_progress:
-                    task_progress[task_id]['status'] = 'error'
-                    task_progress[task_id]['progress'] = 100
-                    task_progress[task_id]['timestamp'] = time.time()
-                    task_progress[task_id]['message'] = result.get("message", "Terjadi kesalahan.")
-                    task_progress[task_id]['error_type'] = result.get("error_type", "validation_error")
-
+                error_msg = result.get("message", "Terjadi kesalahan.")
+                error_type = result.get("error_type", "validation_error")
+                
+                # Update progress menggunakan helper
+                update_task_progress(task_id, 0, 'error', error_msg)
+                
+                # Store error result
                 task_results[task_id] = {
                     "status": "error",
-                    "message": result.get("message", "Terjadi kesalahan."),
-                    "error_type": result.get("error_type", "validation_error"),
+                    "message": error_msg,
+                    "error_type": error_type,
+                    "completed": True,
                     "redirect_url": result.get("redirect_url", "/upload-big-size")
                 }
 
                 # Cleanup folder
-                try:
-                    if os.path.exists(upload_folder_path):
-                        shutil.rmtree(upload_folder_path)
-                except Exception as cleanup_error:
-                    app.logger.error(f"Error hapus folder: {cleanup_error}")
+                if os.path.exists(upload_folder_path):
+                    shutil.rmtree(upload_folder_path)
+                    app.logger.info(f"🧹 Cleaned up folder: {upload_folder_path}")
 
-                app.logger.error(f"[{task_id}] Gagal: {result.get('message')}")
+                mark_task_error(task_id)
+                app.logger.error(f"❌ [{task_id}] Failed: {error_msg}")
 
             else:
-                # PERBAIKAN: Success case - pastikan metadata final tersimpan
+                # ✅ PERBAIKAN 8: Success case dengan metadata final
                 result['upload_folder_path'] = upload_folder_path
-                task_results[task_id] = {"status": "completed", "result": result}
-
-                if task_id in task_progress:
-                    # PERBAIKAN: Pastikan metadata final ada di response
-                    final_metadata = {
-                        'periodeData': periode_data,
-                        'username': user_info.get("username"),
-                        'namaFileUpload': nama_file_upload,
-                        'uploadDate': uploaded_at.strftime('%d %B %Y, %H:%M'),
-                        'fullname': user_info.get("fullname")
-                    }
-                    
-                    task_progress[task_id].update({
-                        'status': 'completed',
-                        'progress': 100,
-                        'timestamp': time.time(),
-                        'metadata': final_metadata  # PERBAIKAN: Tambahkan metadata final
-                    })
-                    
-                    # Update temp_metadata juga untuk konsistensi
-                    if 'temp_metadata' in task_progress[task_id]:
-                        task_progress[task_id]['temp_metadata'].update(final_metadata)
-
-                app.logger.info(f"[{task_id}] Selesai diproses.")
+                
+                # Prepare final metadata
+                final_metadata = {
+                    'periodeData': periode_data,
+                    'username': user_info.get("username"),
+                    'namaFileUpload': nama_file_upload,
+                    'uploadDate': uploaded_at.strftime('%d %B %Y, %H:%M'),
+                    'fullname': user_info.get("fullname")
+                }
+                
+                # ✅ PERBAIKAN: Update progress to completed dengan metadata
+                success = update_task_progress(
+                    task_id, 
+                    100, 
+                    'completed', 
+                    'Upload berhasil diproses',
+                    metadata=final_metadata
+                )
+                
+                if not success:
+                    app.logger.warning(f"⚠️ Failed to update progress for completed task {task_id}")
+                
+                # Store success result
+                task_results[task_id] = {
+                    "status": "success",
+                    "result": result,
+                    "completed": True,
+                    "redirect_url": "/upload-success",
+                    "message": "File berhasil diproses"
+                }
+                
+                # Mark task as completed in registry
+                mark_task_completed(task_id)
+                
+                app.logger.info(
+                    f"✅ [{task_id}] Completed successfully - "
+                    f"Session: {upload_session}, File: {nama_file_upload}"
+                )
 
         except Exception as e:
             error_msg = f"Error tidak terduga: {str(e)}"
             
+            # ✅ PERBAIKAN: Gunakan update_task_progress untuk error
+            update_task_progress(task_id, 0, 'error', error_msg)
+            
             task_results[task_id] = {
                 "status": "error",
                 "message": error_msg,
-                "error_type": "system_error"
+                "error_type": "system_error",
+                "completed": True,
+                "redirect_url": "/upload-big-size"
             }
             
-            if task_id in task_progress:
-                task_progress[task_id].update({
-                    'status': 'error',
-                    'progress': 100,
-                    'error_type': 'system_error',
-                    'message': error_msg,
-                    'timestamp': time.time()
-                })
+            mark_task_error(task_id)
             
-            app.logger.error(f"[{task_id}] {error_msg}")
+            app.logger.error(f"❌ [{task_id}] Unexpected error: {error_msg}")
+            app.logger.error(traceback.format_exc())
             
-            try:
-                if 'upload_folder_path' in locals() and os.path.exists(upload_folder_path):
+            # Cleanup folder on error
+            if upload_folder_path and os.path.exists(upload_folder_path):
+                try:
                     shutil.rmtree(upload_folder_path)
-            except Exception as cleanup_error:
-                app.logger.error(f"Error hapus folder: {cleanup_error}")
+                    app.logger.info(f"🧹 Cleaned up folder after error: {upload_folder_path}")
+                except Exception as cleanup_error:
+                    app.logger.error(f"Error cleaning up folder: {cleanup_error}")
 
         finally:
+            # ✅ PERBAIKAN 9: Proper cleanup
             if conn:
                 try:
                     conn.close()
                 except:
                     pass
-            if not validation_failed:
-                task_queue.task_done()
+            
+            # Always mark task as done
+            task_queue.task_done()
+            
+            # Log final status
+            with task_id_registry_lock:
+                if task_id in task_id_registry:
+                    final_status = task_id_registry[task_id].get('status', 'unknown')
+                    app.logger.info(f"🏁 [{task_id}] Worker finished - Final status: {final_status}")
+                   
+# ==================== WORKER INITIALIZATION ====================
 
-# Jalankan 4 worker thread
-for _ in range(4):
-    threading.Thread(target=process_files_worker, daemon=True).start()
+# Initialize cleanup system
+cleanup_old_tasks()
+
+# Start worker threads
+NUM_WORKERS = 4
+worker_threads = []
+
+for i in range(NUM_WORKERS):
+    t = threading.Thread(
+        target=process_files_worker, 
+        daemon=True,
+        name=f"FileProcessWorker-{i+1}"
+    )
+    t.start()
+    worker_threads.append(t)
+    app.logger.info(f"✅ Started worker thread: FileProcessWorker-{i+1}")
+
+app.logger.info(f"✅ All {NUM_WORKERS} worker threads started successfully")
 
 def escape_sql(val):
     """Mencegah SQL Injection dengan mengganti ' menjadi ''."""
@@ -975,76 +1217,134 @@ def insert_data(cursor, table_name, data_item, columns_to_remove=None, extra_col
         traceback.print_exc()
         print(f"Item: {data_item}")
 
-def cleanup_old_tasks():
-    """Remove old completed tasks from memory"""
-    import threading
-    import time
+def generate_unique_task_id(username, filename):
+    """
+    Generate a truly unique task ID that includes:
+    - Timestamp for uniqueness
+    - Username for tracking
+    - Random UUID component
+    - Hash of filename
+    """
+    timestamp = int(time.time() * 1000)  # milliseconds
+    random_component = str(uuid.uuid4())[:8]
     
-    def cleanup_worker():
-        while True:
-            try:
-                current_time = time.time()
-                # Remove tasks older than 1 hour
-                cutoff_time = current_time - 3600  # 1 hour
-                
-                # Clean up task_progress
-                tasks_to_remove = []
-                for task_id, progress in task_progress.items():
-                    if progress.get('progress', 0) >= 100 or progress.get('status') == 'error':
-                        # Check if task is old enough to remove
-                        if 'timestamp' not in progress:
-                            progress['timestamp'] = current_time
-                        elif current_time - progress['timestamp'] > 300:  # 5 minutes after completion
-                            tasks_to_remove.append(task_id)
-                
-                for task_id in tasks_to_remove:
-                    app.logger.info(f"[{task_id}] Task progress dibersihkan dari memory")
-                    task_progress.pop(task_id, None)
-                    task_results.pop(task_id, None)
-                
-                time.sleep(60)  # Run cleanup every minute
-            except Exception as e:
-                conn.rollback()  # Patch: rollback on error
-                app.logger.error(f"Error in cleanup worker: {e}")
-                time.sleep(60)
+    # Create a unique identifier
+    task_id = f"{username}_{timestamp}_{random_component}"
     
-    cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
-    cleanup_thread.start()
+    # Register the task ID
+    with task_id_registry_lock:
+        # Ensure absolutely unique
+        while task_id in task_id_registry:
+            random_component = str(uuid.uuid4())[:8]
+            task_id = f"{username}_{timestamp}_{random_component}"
+        
+        # Register in registry
+        task_id_registry[task_id] = {
+            'created_at': time.time(),
+            'username': username,
+            'filename': filename,
+            'status': 'active',
+            'upload_session': timestamp  # Use this to identify unique upload sessions
+        }
+        
+        # Track active uploads per user
+        active_uploads[username].add(task_id)
+    
+    app.logger.info(f"✅ Generated unique task_id: {task_id} for user: {username}, file: {filename}")
+    return task_id
 
-# Initialize cleanup when the module loads
-cleanup_old_tasks()
+def is_task_active(task_id):
+    """Check if a task is currently active"""
+    with task_id_registry_lock:
+        if task_id not in task_id_registry:
+            return False
+        return task_id_registry[task_id]['status'] == 'active'
+
+def mark_task_completed(task_id):
+    """Mark a task as completed in the registry"""
+    with task_id_registry_lock:
+        if task_id in task_id_registry:
+            task_id_registry[task_id]['status'] = 'completed'
+            task_id_registry[task_id]['completed_at'] = time.time()
+            
+            # Remove from active uploads
+            username = task_id_registry[task_id].get('username')
+            if username and task_id in active_uploads[username]:
+                active_uploads[username].discard(task_id)
+            
+            app.logger.info(f"✅ Marked task {task_id} as completed")
+
+def mark_task_error(task_id):
+    """Mark a task as errored in the registry"""
+    with task_id_registry_lock:
+        if task_id in task_id_registry:
+            task_id_registry[task_id]['status'] = 'error'
+            task_id_registry[task_id]['error_at'] = time.time()
+            
+            # Remove from active uploads
+            username = task_id_registry[task_id].get('username')
+            if username and task_id in active_uploads[username]:
+                active_uploads[username].discard(task_id)
+            
+            app.logger.info(f"❌ Marked task {task_id} as error")
+
+def update_task_progress(task_id, progress, status='processing', message=None, metadata=None):
+    """Thread-safe progress update with validation"""
+    
+    # Validate task is active
+    if not is_task_active(task_id) and status == 'processing':
+        app.logger.warning(f"⚠️ Attempted to update inactive task: {task_id}")
+        return False
+    
+    with task_progress_lock:
+        # Initialize if not exists
+        if task_id not in task_progress:
+            task_progress[task_id] = {
+                'created_at': time.time(),
+                'upload_session': None
+            }
+        
+        # Get upload session from registry
+        with task_id_registry_lock:
+            if task_id in task_id_registry:
+                task_progress[task_id]['upload_session'] = task_id_registry[task_id]['upload_session']
+        
+        # Update progress
+        task_progress[task_id]['progress'] = int(progress)
+        task_progress[task_id]['status'] = status
+        task_progress[task_id]['timestamp'] = time.time()
+        task_progress[task_id]['last_update'] = datetime.now().isoformat()
+        
+        if message:
+            task_progress[task_id]['message'] = message
+        if metadata:
+            task_progress[task_id]['temp_metadata'] = metadata
+        
+        # Update progress bars for detailed tracking
+        if 'progress_bars' not in task_progress[task_id]:
+            task_progress[task_id]['progress_bars'] = {}
+        
+        task_progress[task_id]['progress_bars']['file_processing'] = min(progress, 80)
+        task_progress[task_id]['progress_bars']['db_processing'] = max(0, progress - 80)
+        
+        # Mark as completed/error in registry if done
+        if status == 'completed':
+            mark_task_completed(task_id)
+        elif status == 'error':
+            mark_task_error(task_id)
+    
+    return True
 
 def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_at):
-    global uploaded_data
-    global uploaded_data_2
-    global uploaded_data_3
-    global uploaded_data_2
-    global uploaded_data_3
-    global uploaded_data_4
-    global uploaded_data_5
-    global uploaded_data_6
-    global uploaded_data_7
-    global uploaded_data_8
-    global uploaded_data_9
-    global uploaded_data_10
-    global uploaded_data_11
+    """
+    Process uploaded files with task-scoped variables (not global).
+    This prevents race conditions when multiple uploads happen simultaneously.
+    """
     
-    global flag
-
-    global active_facility_1
-    global active_facility_2
-    global active_facility_3
-    global active_facility_4
-    global active_facility_5
-
-    global closed_facility_1
-    global closed_facility_2
-    global closed_facility_3
-    global closed_facility_4
-    global closed_facility_5
+    # ========== TASK-SCOPED VARIABLES (NOT GLOBAL) ==========
+    # All variables are local to this task to prevent concurrent upload conflicts
     
-    uploaded_data_2 = None
-    uploaded_data_3 = None
+    uploaded_data = None
     uploaded_data_2 = None
     uploaded_data_3 = None
     uploaded_data_4 = None
@@ -1055,30 +1355,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
     uploaded_data_9 = None
     uploaded_data_10 = None
     uploaded_data_11 = None
-    flag = ''
-
-    table_data = None
     
-    list_table_data = []
-    conn = None
-
-    json_header = None
-    json_individual = None
-    json_perusahaan = None
-    json_paramPencarian = None
-    json_dpdebitur = None
-    json_kPengurusPemilik = None
-    json_rFasilitas = None
-    json_fKreditPembiayan = None
-    json_fSuratBerharga = None
-    json_fLC = None
-    json_fGaransi = None
-    json_fFasilitasLain = None
-
-    df_kPengurusPemilik = None
-    df_temp = None
-    data_temp = None
-    df_expanded = None
+    flag = ''
 
     active_facility_1 = None
     active_facility_2 = None
@@ -1101,6 +1379,33 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
     list_uploaded_data_8 = []
     list_uploaded_data_9 = []
     list_uploaded_data_10 = []
+    
+    table_data = None
+    list_table_data = []
+    conn = None
+
+    json_header = None
+    json_individual = None
+    json_perusahaan = None
+    json_paramPencarian = None
+    json_dpdebitur = None
+    json_kPengurusPemilik = None
+    json_rFasilitas = None
+    json_fKreditPembiayan = None
+    json_fSuratBerharga = None
+    json_fLC = None
+    json_fGaransi = None
+    json_fFasilitasLain = None
+
+    df_kPengurusPemilik = None
+    df_temp = None
+    data_temp = None
+    df_expanded = None
+
+    # ========== CRITICAL: TASK-SCOPED IDENTITAS & NPWP ==========
+    # These must be local to prevent cross-task contamination
+    task_session_identitas = None  # Validasi identitas untuk task ini
+    task_session_npwp = None       # Validasi NPWP untuk task ini
     
     jenis_surat_berharga = [
         {
@@ -1267,10 +1572,8 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
     total_files = len(files)
     
     identitas = None
-    session_identitas = None
     
     npwp = None
-    session_npwp = None
     
     try:
         conn = get_db_connection()
@@ -1351,19 +1654,20 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         posisiDataTerakhir = data_perusahaan['posisiDataTerakhir']
                         json_paramPencarian = data_perusahaan.get('parameterPencarian', {})
                         npwp = json_paramPencarian.get('npwp', '')
-                        print(f"Get NPWP: {npwp}")
+                        app.logger.debug(f"[{task_id}] Get NPWP: {npwp}")
                         
-                        # Validasi NPWP untuk sesi upload
-                        if session_npwp is None:
+                        # Validasi NPWP untuk sesi upload (task-scoped)
+                        if task_session_npwp is None:
                             # File pertama - simpan NPWP sebagai referensi
-                            print(f"Before NPWP: {session_npwp} - NPWP: {npwp}")
-                            session_npwp = npwp
-                            print(f"After NPWP: {session_npwp} - NPWP: {npwp}")
-                        elif npwp != session_npwp:
+                            task_session_npwp = npwp
+                            app.logger.info(f"[{task_id}] Task session NPWP set to: {npwp}")
+                        elif npwp != task_session_npwp:
+                            error_msg = f"File yang diupload tidak konsisten. File pertama: {task_session_npwp}, File ke-{idx}: {npwp}. Pastikan semua file dalam satu sesi upload memiliki NPWP yang sama."
+                            app.logger.warning(f"[{task_id}] {error_msg}")
                             return {
                                 "error": True,
                                 "error_type": "validation_error",
-                                "message": f"File yang diupload tidak konsisten. File pertama: {session_npwp}, File ke-{idx}: {npwp}. Pastikan semua file dalam satu sesi upload memiliki NPWP yang sama.",
+                                "message": error_msg,
                                 "redirect_url": "/upload-big-size"
                             }
                     elif 'individual' in data and isinstance(data['individual'], dict) and data['individual'].get('posisiDataTerakhir'):
@@ -1373,15 +1677,18 @@ def process_uploaded_files(task_id, files, uploaded_files, user_info, uploaded_a
                         identitas = json_paramPencarian.get('noIdentitas', '')
                         
                         # Validasi identitas untuk sesi upload
-                        if session_identitas is None:
+                        if task_session_identitas is None:
                             # File pertama - simpan identitas sebagai referensi
-                            session_identitas = identitas
-                        elif identitas != session_identitas:
+                            task_session_identitas = identitas
+                            app.logger.info(f"[{task_id}] Task session identitas set to: {identitas}")
+                        elif identitas != task_session_identitas:
                             # File kedua dan seterusnya - bandingkan dengan identitas file pertama
+                            error_msg = f"File yang diupload tidak konsisten. File pertama: {task_session_identitas}, File ke-{idx}: {identitas}. Pastikan semua file dalam satu sesi upload memiliki Nomor Identitas yang sama."
+                            app.logger.warning(f"[{task_id}] {error_msg}")
                             return {
                                 "error": True,
                                 "error_type": "validation_error",
-                                "message": f"File yang diupload tidak konsisten. File pertama: {session_identitas}, File ke-{idx}: {identitas}. Pastikan semua file dalam satu sesi upload memiliki Nomor Identitas yang sama.",
+                                "message": error_msg,
                                 "redirect_url": "/upload-big-size"
                             }
                                 
@@ -2746,197 +3053,121 @@ def get_data_for_display():
 @app.route('/progress-status/<task_id>')
 def get_progress_status(task_id):
     try:
-        def ensure_string_value(value, fallback=''):
-            """Pastikan value adalah string yang valid untuk JSON"""
-            if value is None:
-                return fallback
-            
-            if hasattr(value, 'strftime'):  # datetime object
-                try:
-                    return value.strftime('%d %B %Y, %H:%M')
-                except:
-                    return str(value)
-            
-            if isinstance(value, (dict, list, tuple, set)):
-                try:
-                    return str(value)
-                except:
-                    return fallback
-            
-            if hasattr(value, '__str__'):
-                try:
-                    str_value = str(value)
-                    return str_value.strip()
-                except:
-                    return fallback
-            
-            return fallback
-
-        def sanitize_metadata(metadata_dict):
-            """Sanitasi metadata untuk memastikan semua value adalah string"""
-            if not metadata_dict or not isinstance(metadata_dict, dict):
-                return {}
-            
-            sanitized = {}
-            for key, value in metadata_dict.items():
-                safe_key = str(key) if key is not None else 'unknown'
-                safe_value = ensure_string_value(value)
-                sanitized[safe_key] = safe_value
-                
-            return sanitized
-
-        # Cek di task_progress dulu
+        # Validate task exists in registry
+        with task_id_registry_lock:
+            task_info = task_id_registry.get(task_id)
+            if not task_info:
+                return jsonify({
+                    'progress': 0,
+                    'progress_bars': {'bar1': 0, 'bar2': 0},
+                    'status': 'not_found',
+                    'message': 'Task not found or expired',
+                    'timestamp': float(time.time()),
+                    'error': True
+                }), 404
+        
+        # Check in task_progress
         if task_id in task_progress:
-            progress_data = task_progress[task_id].copy()
-
-            # ====== AMBIL METADATA ======
-            metadata = None
+            with task_progress_lock:
+                progress_data = task_progress[task_id].copy()
             
-            if 'temp_metadata' in progress_data:
-                metadata = sanitize_metadata(progress_data['temp_metadata'])
-            else:
-                try:
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    query = """
-                        SELECT TOP 1 periodeData, username, namaFileUpload, uploadDate, fullname
-                        FROM slik_header 
-                        WHERE username = ? AND namaFileUpload = ?
-                        ORDER BY uploadDate DESC
-                    """
-                    if 'key' in progress_data:
-                        key_parts = progress_data['key'].split('_')
-                        if len(key_parts) >= 2:
-                            username = key_parts[0]
-                            nama_file = key_parts[1]
-                            cursor.execute(query, (username, nama_file))
-                            result = cursor.fetchone()
-                            if result:
-                                raw_metadata = {
-                                    'periodeData': result[0],
-                                    'username': result[1],
-                                    'namaFileUpload': result[2],
-                                    'uploadDate': result[3],
-                                    'fullname': result[4] if len(result) > 4 else None
-                                }
-                                metadata = sanitize_metadata(raw_metadata)
-                    cursor.close()
-                    conn.close()
-                except Exception as e:
-                    print(f"Error getting metadata from DB: {e}")
-                    metadata = {}
-
-            # ====== FORMAT RESPONSE ======
-            # PERBAIKAN: Normalize status ke lowercase
-            raw_status = str(progress_data.get('status', 'processing')).lower()
-            
+            # Add upload_session to response for validation
             response = {
                 'progress': int(progress_data.get('progress', 0)),
-                'status': raw_status,  # 'processing', 'completed', atau 'error'
-                'timestamp': float(progress_data.get('timestamp', time.time()))
+                'status': str(progress_data.get('status', 'processing')).lower(),
+                'timestamp': float(progress_data.get('timestamp', time.time())),
+                'upload_session': progress_data.get('upload_session'),  # For frontend validation
+                'task_id': task_id  # Explicit task ID for validation
             }
-
-            # ====== PROGRESS BARS ======
-            if 'progress_bars' in progress_data and isinstance(progress_data['progress_bars'], dict):
-                sanitized_progress_bars = {}
-                for bar_key, bar_value in progress_data['progress_bars'].items():
-                    try:
-                        sanitized_progress_bars[str(bar_key)] = int(bar_value)
-                    except:
-                        sanitized_progress_bars[str(bar_key)] = 0
-                response['progress_bars'] = sanitized_progress_bars
+            
+            # Progress bars
+            if 'progress_bars' in progress_data:
+                response['progress_bars'] = progress_data['progress_bars']
             else:
                 main_progress = int(progress_data.get('progress', 0))
-                response['progress_bars'] = {
-                    'bar1': main_progress,
-                    'bar2': main_progress
-                }
-
-            # ====== STATUS COMPLETED ======
-            if raw_status == 'completed':
+                response['progress_bars'] = {'bar1': main_progress, 'bar2': main_progress}
+            
+            # Metadata
+            metadata = progress_data.get('temp_metadata')
+            if metadata:
+                sanitized = {}
+                for key, value in metadata.items():
+                    sanitized[key] = str(value) if value is not None else ''
+                response['metadata'] = sanitized
+            
+            # Completed status
+            if response['status'] == 'completed':
                 response.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-success',
-                    'message': ensure_string_value(progress_data.get('message', 'Upload berhasil diproses')),
+                    'message': progress_data.get('message', 'Upload berhasil diproses'),
                     'final_message': 'Upload berhasil diproses',
-                    'error': False  # Explicitly set error to false
+                    'error': False
                 })
-
-            # ====== STATUS ERROR ======
-            elif raw_status == 'error':
-                error_message = ensure_string_value(progress_data.get('message', 'Unknown error'))
-                error_type = ensure_string_value(progress_data.get('error_type', 'general_error'))
-                
+            
+            # Error status
+            elif response['status'] == 'error':
                 response.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-big-size',
                     'error': True,
-                    'message': error_message,
-                    'error_message': error_message,
-                    'error_type': error_type
+                    'message': progress_data.get('message', 'Unknown error'),
+                    'error_type': progress_data.get('error_type', 'general_error')
                 })
-
-            # ====== TAMBAHKAN METADATA ======
-            if metadata:
-                response['metadata'] = metadata
-                print(f"✅ Metadata added for task {task_id}:", metadata)
-            else:
-                print(f"⚠️ No metadata available for task {task_id}")
-
+            
             return jsonify(response)
-
-        # ====== CEK DI TASK_RESULTS ======
+        
+        # Check in task_results
         elif task_id in task_results:
             result = task_results[task_id]
-            base_response = {
+            
+            response = {
                 'progress': 100,
                 'progress_bars': {'bar1': 100, 'bar2': 100},
-                'timestamp': float(time.time())
+                'timestamp': float(time.time()),
+                'upload_session': task_info.get('upload_session'),
+                'task_id': task_id
             }
             
             if result.get('status') == 'success':
-                base_response.update({
+                response.update({
                     'status': 'completed',
                     'completed': True,
                     'should_redirect': True,
-                    'redirect_url': ensure_string_value(result.get('redirect_url', '/upload-success')),
-                    'message': ensure_string_value(result.get('message', 'Upload berhasil diproses')),
-                    'final_message': 'Upload berhasil diproses',
+                    'redirect_url': result.get('redirect_url', '/upload-success'),
+                    'message': result.get('message', 'Upload berhasil diproses'),
                     'error': False
                 })
             else:
-                error_msg = ensure_string_value(result.get('message', 'Task failed'))
-                base_response.update({
+                response.update({
                     'status': 'error',
                     'completed': True,
                     'should_redirect': True,
-                    'redirect_url': ensure_string_value(result.get('redirect_url', '/upload-big-size')),
+                    'redirect_url': result.get('redirect_url', '/upload-big-size'),
                     'error': True,
-                    'message': error_msg,
-                    'error_message': error_msg,
-                    'error_type': ensure_string_value(result.get('error_type', 'general_error'))
+                    'message': result.get('message', 'Task failed'),
+                    'error_type': result.get('error_type', 'general_error')
                 })
             
-            return jsonify(base_response)
-
-        # ====== TASK NOT FOUND ======
+            return jsonify(response)
+        
+        # Task not found in memory but exists in registry
         else:
             return jsonify({
                 'progress': 0,
                 'progress_bars': {'bar1': 0, 'bar2': 0},
-                'status': 'not_found',
-                'message': 'Task not found',
+                'status': 'expired',
+                'message': 'Task data expired from memory',
                 'timestamp': float(time.time()),
-                'error': True
+                'error': True,
+                'upload_session': task_info.get('upload_session'),
+                'task_id': task_id
             }), 404
-            
+    
     except Exception as e:
-        print(f"❌ Error in get_progress_status: {e}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
-        
+        app.logger.error(f"❌ Error in get_progress_status: {e}")
         return jsonify({
             'progress': 0,
             'progress_bars': {'bar1': 0, 'bar2': 0},
@@ -3165,49 +3396,95 @@ def upload_big_size_file():
 
         # Tambahkan task yang sedang berjalan
         in_progress_tasks = []
-        for tid, v in task_progress.items():
-            if v.get('status') == 'Processing' and 'temp_metadata' in v:
-                v['temp_metadata']['task_id'] = tid
-                in_progress_tasks.append(v['temp_metadata'])
+        with task_progress_lock:
+            for tid, v in task_progress.items():
+                # Validasi task masih aktif
+                if not is_task_active(tid):
+                    continue
+                
+                status = v.get('status', 'processing')
+                if status == 'processing' and 'temp_metadata' in v:
+                    metadata = v['temp_metadata'].copy()
+                    metadata['task_id'] = tid
+                    metadata['upload_session'] = v.get('upload_session')  # Tambahkan session
+                    in_progress_tasks.append(metadata)
 
         all_data = in_progress_tasks + all_data
 
         # Siapkan progres task
         current_task_progress = {}
+        valid_task_ids = []
+        
         for item in all_data:
             if not all(key in item for key in ['username', 'namaFileUpload']):
                 continue
 
             task_id = item.get('task_id')
-            if task_id and task_id in task_progress:
-                current_task_progress[task_id] = task_progress[task_id].get('progress', 100)
+            
+            # Cek task_id eksplisit
+            if task_id:
+                # Validasi task masih ada dan aktif
+                with task_id_registry_lock:
+                    if task_id in task_id_registry:
+                        with task_progress_lock:
+                            if task_id in task_progress:
+                                current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
+                                valid_task_ids.append(task_id)
+                    elif task_id in task_results:
+                        # Task sudah selesai tapi masih di results
+                        current_task_progress[task_id] = 100
+                        valid_task_ids.append(task_id)
             else:
-                key = f"{item['username']}_{item['namaFileUpload']}_"
-                matched = [tid for tid, v in task_progress.items() if v.get('key', '').startswith(key)]
-                if matched:
-                    task_id = matched[0]
-                    item['task_id'] = task_id
-                    current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
-                else:
-                    item['task_id'] = None
+                # PERBAIKAN: Cari task berdasarkan metadata dengan validasi lebih ketat
+                key = f"{item['username']}_{item['namaFileUpload']}"
+                
+                with task_progress_lock:
+                    matched = []
+                    for tid, v in task_progress.items():
+                        stored_key = v.get('key', '')
+                        # Match berdasarkan username dan nama file
+                        if stored_key.startswith(key):
+                            # Validasi task masih aktif
+                            if is_task_active(tid):
+                                matched.append(tid)
+                    
+                    if matched:
+                        # Ambil task terbaru jika ada multiple match
+                        task_id = matched[-1]  # Task terakhir yang dibuat
+                        item['task_id'] = task_id
+                        current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
+                        valid_task_ids.append(task_id)
+                    else:
+                        item['task_id'] = None
                     
         task_id = session.get('task_id', None)
         # Jangan hapus session jika error → biarkan JS polling dan tampilkan modal
-        if not task_id or (task_id not in task_progress and task_id not in task_results):
-            session.pop('task_id', None)
-            task_id = None
+        if task_id:
+            # Validasi task masih valid
+            with task_id_registry_lock:
+                if task_id not in task_id_registry:
+                    # Task sudah expired dari registry
+                    session.pop('task_id', None)
+                    task_id = None
+                elif not is_task_active(task_id):
+                    # Task sudah tidak aktif, cek apakah selesai
+                    task_info = task_id_registry.get(task_id, {})
+                    if task_info.get('status') in ['completed', 'error']:
+                        # Task sudah selesai, bisa di-clear
+                        session.pop('task_id', None)
+                        task_id = None
 
         return render_template(
             'upload_big_size.html',
             show_alert=show_alert,
             show_processing_alert=show_processing_alert,
-            # data=all_data,
             flags=FLAGS,
             role_access=role_access,
             fullname=fullname,
             report_access=report_access,
             task_progress=current_task_progress,
-            task_id=task_id
+            task_id=task_id,
+            tasksFromBackend=valid_task_ids  # Pass semua valid task IDs
         )
 
     elif request.method == 'POST':
@@ -3217,55 +3494,53 @@ def upload_big_size_file():
             uploaded_files = request.files.getlist('file')
 
             if not uploaded_files or not any(f.filename for f in uploaded_files):
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'error': 'No files selected for upload.'}), 400
                 flash("No files selected for upload.")
                 return redirect(url_for('upload_big_size_file'))
-            
             # Validasi input
             if not flag or not nama_file or not uploaded_files:
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'error': 'Semua field harus diisi'}), 400
                 flash('Semua field harus diisi', 'error')
                 return redirect(url_for('upload_big_size_file'))
-            
             # Cek duplikasi nama file
             if check_filename_exists(nama_file):
-                # flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
-                # return redirect(url_for('upload_big_size_file'))
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'error': 'Nama File sudah ada, harap masukkan nama file yang lain'}), 400
                 flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
                 return redirect(url_for('upload_big_size_file'))
-
             # Hitung total ukuran dan validasi ekstensi file
             total_file_size = 0
             for f in uploaded_files:
                 if f and f.filename:
                     if not is_txt_file(f.filename):
-                        # flash(f"File '{f.filename}' bukan file .txt. Hanya file .txt yang diperbolehkan.", "error")
-                        # return redirect(url_for('upload_big_size_file'))
+                        if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                            return jsonify({'success': False, 'error': f"File '{f.filename}' bukan file .txt. Hanya file .txt yang diperbolehkan."}), 400
                         return '''
                             <script>
                                 alert("File yang diupload bukan file .txt. Hanya file .txt yang diperbolehkan.");
                                 window.location.href = "/upload-big-size";
                             </script>
                         '''
-
                     f.seek(0, 2)  # Go to end of file
                     total_file_size += f.tell()  # Get current position (file size)
                     f.seek(0)  # Reset file pointer to beginning
-
             if total_file_size > MAX_FILE_BIG_SIZE:
-                # flash("Total file yang diupload terlalu besar. Maksimum 200MB!")
-                # return redirect(url_for('upload_big_size_file'))
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'error': 'Total file yang diupload terlalu besar. Maksimum 200MB!'}), 400
                 return '''
                     <script>
                         alert("Total file yang diupload terlalu besar. Maksimum 200MB!");
                         window.location.href = "/upload-big-size";
                     </script>
                 '''
-
             # Generate unique task id
-            task_id = str(uuid.uuid4())
+            task_id = generate_unique_task_id(username, nama_file)
+            with task_id_registry_lock:
+                upload_session = task_id_registry[task_id]['upload_session']
             current_datetime = datetime.now()
-
             # Simpan file dalam bentuk bytes
-            total_file_size = 0
             temp_files = []
             for file in uploaded_files:
                 if file and file.filename:
@@ -3274,7 +3549,6 @@ def upload_big_size_file():
                         'filename': file.filename,
                         'content': file_content
                     })
-
             # Simpan task ke queue
             user_info = {
                 "username": username,
@@ -3283,60 +3557,87 @@ def upload_big_size_file():
                 "flag": flag,
                 "nama_file": nama_file
             }
-            
             # Masukkan ke task_progress
-            task_progress[task_id] = {
-                'progress': 0,
-                'status': 'processing', # pastikan status awal adalah 'processing'
-                'key': f"{username}_{nama_file}_{flag}",
-                'temp_metadata': {
-                    'username': username,
-                    'namaFileUpload': nama_file,
-                    'periodeData': '-',
-                    'uploadDate': current_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-                    'task_id': task_id,
-                    'fullname': fullname
+            with task_progress_lock:
+                task_progress[task_id] = {
+                    'progress': 0,
+                    'status': 'processing',
+                    'timestamp': time.time(),
+                    'created_at': time.time(),
+                    'key': f"{username}_{nama_file}_{flag}",
+                    'upload_session': upload_session,  # KUNCI: Upload session untuk validasi
+                    'temp_metadata': {
+                        'username': username,
+                        'namaFileUpload': nama_file,
+                        'periodeData': '-',
+                        'uploadDate': current_datetime.strftime('%d %B %Y, %H:%M'),
+                        'task_id': task_id,
+                        'fullname': fullname
+                    },
+                    'progress_bars': {
+                        'file_processing': 0,
+                        'db_processing': 0
+                    }
                 }
-            }
-
             # Masukkan ke queue untuk diproses
             try:
                 task_queue.put_nowait((task_id, temp_files, user_info))
+                app.logger.info(
+                    f"✅ Task queued - ID: {task_id}, Session: {upload_session}, "
+                    f"User: {username}, File: {nama_file}"
+                )
             except queue.Full:
-                return jsonify({
-                    "status": "error",
-                    "message": "Antrean upload file penuh. Silakan coba lagi nanti."
-                }), 503
-            
+                with task_progress_lock:
+                    task_progress.pop(task_id, None)
+                mark_task_error(task_id)
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({'success': False, 'error': 'Antrean upload file penuh. Silakan coba lagi nanti.'}), 400
+                flash("Antrean upload file penuh. Silakan coba lagi nanti.", "error")
+                return redirect(url_for('upload_big_size_file'))
             # Simpan task_id di session dan set flag upload_done
             session['task_id'] = task_id
+            session['upload_session'] = upload_session  # Simpan juga session
             session['upload_done'] = False
             session['show_processing_alert'] = True
             session['temp_filename'] = nama_file
-            
+            app.logger.info(
+                f"✅ Upload initiated - Task: {task_id}, Session: {upload_session}, "
+                f"User: {username}, File: {nama_file}, Size: {total_file_size} bytes"
+            )
+            # Jika AJAX/fetch, return JSON agar DataTable bisa reload tanpa reload halaman
+            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({'success': True, 'task_id': task_id, 'upload_session': upload_session}), 200
             return redirect(url_for('upload_big_size_file'))
-        
         except Exception as e:
-            print(f"Error during upload: {e}")
-            # flash(f'Error during upload: {e}', 'error')
+            app.logger.error(f"❌ Error during upload: {e}")
+            import traceback
+            app.logger.error(traceback.format_exc())
+            if 'task_id' in locals():
+                with task_progress_lock:
+                    task_progress.pop(task_id, None)
+                mark_task_error(task_id)
+            
+            flash(f'Error during upload: {str(e)}', 'error')
             return redirect(url_for('upload_big_size_file'))
+
+cleanup_old_tasks()
 
 @app.route('/api/upload-data')
 def api_upload_data():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get pagination parameters
         draw = int(request.args.get('draw', 1))
         start = int(request.args.get('start', 0))
         length = int(request.args.get('length', 10))
         search_value = request.args.get('search[value]', '')
-        
+
         # Order parameters
         order_column_index = int(request.args.get('order[0][column]', 2))
         order_direction = request.args.get('order[0][dir]', 'desc')
-        
+
         # Map column index to database column
         column_map = {
             0: 'namaFileUpload',
@@ -3344,14 +3645,14 @@ def api_upload_data():
             2: 'uploadDate'
         }
         order_column = column_map.get(order_column_index, 'uploadDate')
-        
-        # ✅ PERBAIKAN: Query tanpa task_id
+
+        # Query DB
         base_query = """
             SELECT periodeData, namaFileUpload, uploadFolderPath, username, 
                    fullname, uploadDate
             FROM slik_uploader
         """
-        
+
         # Add search filter if exists
         where_clause = ""
         params = []
@@ -3364,12 +3665,12 @@ def api_upload_data():
             """
             search_param = f'%{search_value}%'
             params = [search_param, search_param, search_param, search_param]
-        
+
         # Get total count
         count_query = f"SELECT COUNT(*) FROM slik_uploader {where_clause}"
         cursor.execute(count_query, params)
         total_records = cursor.fetchone()[0]
-        
+
         # Get filtered data with pagination (SQL Server syntax)
         query = f"""
             {base_query}
@@ -3380,16 +3681,15 @@ def api_upload_data():
         """
         params_query = params.copy()
         params_query.extend([start, length])
-        
+
         cursor.execute(query, params_query)
         rows = cursor.fetchall()
         columns = [col[0] for col in cursor.description]
-        
+
         data = []
+        # --- Data dari DB ---
         for row in rows:
             item = dict(zip(columns, row))
-            
-            # Format upload date
             try:
                 upload_date_obj = parser.parse(str(item.get("uploadDate")))
                 upload_date = upload_date_obj.strftime("%d %B %Y, %H:%M")
@@ -3397,24 +3697,18 @@ def api_upload_data():
             except:
                 upload_date = "N/A"
                 upload_date_raw = ""
-            
-            # ✅ PERBAIKAN: Cek task progress berdasarkan key pattern
-            # Cari task_id yang match dengan username dan namaFileUpload
             progress = 100
             status = 'completed'
-            
             search_key = f"{item.get('username')}_{item.get('namaFileUpload')}"
             for tid, task_data in task_progress.items():
                 if task_data.get('key', '').startswith(search_key):
                     progress = task_data.get('progress', 0)
                     status = task_data.get('status', 'processing')
                     break
-            
-            # Build progress bar HTML
             if status == 'error':
                 progress_html = f"""
-                <div class="progress" style="height:18px;">
-                    <div class="progress-bar bg-danger" role="progressbar" style="width: 100%;">
+                <div class=\"progress\" style=\"height:18px;\">
+                    <div class=\"progress-bar bg-danger\" role=\"progressbar\" style=\"width: 100%;\">
                         Error
                     </div>
                 </div>
@@ -3422,49 +3716,46 @@ def api_upload_data():
             else:
                 animated_class = 'progress-bar-animated' if progress < 100 else ''
                 progress_html = f"""
-                <div class="progress" style="height:18px;">
-                    <div class="progress-bar progress-bar-striped {animated_class}" 
-                         role="progressbar" style="width: {progress}%;">
+                <div class=\"progress\" style=\"height:18px;\">
+                    <div class=\"progress-bar progress-bar-striped {animated_class}\" 
+                         role=\"progressbar\" style=\"width: {progress}%;\">
                         {progress}%
                     </div>
                 </div>
                 """
-            
-            # Build download buttons HTML
             if progress == 100 and status != 'error':
                 download_html = f"""
-                <div class="btn-group">
-                    <a href="{url_for('download_big_size', 
+                <div class=\"btn-group\">
+                    <a href=\"{url_for('download_big_size', 
                                       periodeData=item['periodeData'], 
                                       username=item['username'], 
                                       namaFileUpload=item['namaFileUpload'], 
-                                      uploadDate=str(upload_date_raw))}" 
-                       class="btn btn-outline-success btn-sm" title="Download Excel">
-                        Excel <i class="fas fa-file-excel"></i>
+                                      uploadDate=str(upload_date_raw))}\" 
+                       class=\"btn btn-outline-success btn-sm\" title=\"Download Excel\">
+                        Excel <i class=\"fas fa-file-excel\"></i>
                     </a>
-                    <a href="{url_for('download_upload_zip', 
+                    <a href=\"{url_for('download_upload_zip', 
                                       periodeData=item['periodeData'], 
                                       username=item['username'], 
                                       namaFileUpload=item['namaFileUpload'], 
-                                      uploadDate=str(upload_date_raw))}" 
-                       class="btn btn-outline-primary btn-sm" title="Download ZIP">
-                        ZIP <i class="fas fa-file-archive"></i>
+                                      uploadDate=str(upload_date_raw))}\" 
+                       class=\"btn btn-outline-primary btn-sm\" title=\"Download ZIP\">
+                        ZIP <i class=\"fas fa-file-archive\"></i>
                     </a>
                 </div>
                 """
             elif status == 'error':
                 download_html = """
-                <button class="btn btn-danger btn-sm" disabled>
-                    <i class="fas fa-exclamation-triangle"></i> Error
+                <button class=\"btn btn-danger btn-sm\" disabled>
+                    <i class=\"fas fa-exclamation-triangle\"></i> Error
                 </button>
                 """
             else:
                 download_html = """
-                <button class="btn btn-secondary btn-sm" disabled>
-                    <i class="fas fa-spinner fa-spin"></i> Processing
+                <button class=\"btn btn-secondary btn-sm\" disabled>
+                    <i class=\"fas fa-spinner fa-spin\"></i> Processing
                 </button>
                 """
-            
             data.append([
                 item['namaFileUpload'],
                 item['periodeData'],
@@ -3472,14 +3763,46 @@ def api_upload_data():
                 progress_html,
                 download_html
             ])
-        
+
+        # --- Tambahkan data in-progress yang belum masuk DB ---
+        in_progress = []
+        with task_progress_lock:
+            for tid, v in task_progress.items():
+                if v.get('status', 'processing') == 'processing' and 'temp_metadata' in v:
+                    meta = v['temp_metadata']
+                    # Hindari duplikasi jika sudah ada di DB
+                    if not any(meta.get('namaFileUpload') == d[0] and meta.get('periodeData', '-') == d[1] for d in data):
+                        upload_date = datetime.now().strftime("%d %B %Y, %H:%M")
+                        progress = v.get('progress', 0)
+                        animated_class = 'progress-bar-animated' if progress < 100 else ''
+                        progress_html = f"""
+                        <div class=\"progress\" style=\"height:18px;\">
+                            <div class=\"progress-bar progress-bar-striped {animated_class}\" 
+                                 role=\"progressbar\" style=\"width: {progress}%;\">
+                                {progress}%
+                            </div>
+                        </div>
+                        """
+                        download_html = """
+                        <button class=\"btn btn-secondary btn-sm\" disabled>
+                            <i class=\"fas fa-spinner fa-spin\"></i> Processing
+                        </button>
+                        """
+                        data.append([
+                            meta.get('namaFileUpload', '-'),
+                            meta.get('periodeData', '-'),
+                            upload_date,
+                            progress_html,
+                            download_html
+                        ])
+
         cursor.close()
         conn.close()
-        
+
         return jsonify({
             "draw": draw,
-            "recordsTotal": total_records,
-            "recordsFiltered": total_records,
+            "recordsTotal": total_records + len(data) - len(rows),
+            "recordsFiltered": total_records + len(data) - len(rows),
             "data": data
         })
         

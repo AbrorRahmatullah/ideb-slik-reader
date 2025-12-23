@@ -63,76 +63,14 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <!-- {% for item in data %}
-                    {% set task_id = item.task_id %}
-                    {% set task = task_progress.get(task_id) %}
-                    
-                    {% if task is mapping %}
-                        {% set progress = task.get('progress', 0) %}
-                        {% set status = task.get('status', 'processing') %}
-                    {% else %}
-                        {% if task_id and task_id != 'null' %}
-                            {% set progress = 0 %}
-                            {% set status = 'processing' %}
-                        {% else %}
-                            {% set progress = 100 %}
-                            {% set status = 'completed' %}
-                        {% endif %}
-                    {% endif %}
-
-                    <tr>
-                        <td>{{ item.namaFileUpload|string }}</td>
-                        <td>{{ item.periodeData|string }}</td>
-                        <td class="text-nowrap" data-order="{{ item.uploadDate_raw|string }}">
-                            {% if item.uploadDate %}
-                                {{ item.uploadDate|string }}
-                            {% else %}
-                                N/A
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="progress" style="height: 18px;">
-                                <div id="progress-bar-{{ task_id or 'static-' ~ loop.index }}"
-                                     class="progress-bar progress-bar-striped {{ 'progress-bar-animated' if progress < 100 and status != 'error' else '' }} {{ 'bg-danger' if status == 'error' else '' }}"
-                                     role="progressbar" style="width: {{ progress }}%;"
-                                     aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
-                                    {{ 'Error' if status == 'error' else (progress ~ '%') }}
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            {% if progress == 100 and status != 'error' %}
-                                <div class="btn-group">
-                                    <a href="{{ url_for('download_big_size', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
-                                       class="btn btn-outline-success btn-sm" title="Download Excel">Excel
-                                        <i class="fas fa-file-excel"></i>
-                                    </a>
-                                    <a href="{{ url_for('download_upload_zip', periodeData=item.periodeData, username=item.username, namaFileUpload=item.namaFileUpload, uploadDate=item.uploadDate|string) }}"
-                                       class="btn btn-outline-primary btn-sm" title="Download ZIP">ZIP
-                                        <i class="fas fa-file-archive"></i>
-                                    </a>
-                                </div>
-                            {% elif status == 'error' %}
-                                <button id="download-btn-{{ task_id or 'static-' ~ loop.index }}" class="btn btn-danger btn-sm" disabled>
-                                    <i class="fas fa-exclamation-triangle"></i> Error
-                                </button>
-                            {% else %}
-                                <button id="download-btn-{{ task_id or 'static-' ~ loop.index }}" class="btn btn-secondary btn-sm" disabled>
-                                    <i class="fas fa-spinner fa-spin"></i> Processing
-                                </button>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %} -->
+                    <!-- Data will be loaded via AJAX -->
                 </tbody>
             </table>
         </div>
     </div>
 </div>
 
-<!-- Base Modal -->
-{% include "base_modal.html" with context %}
-
+<!-- Toast Notification -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
     <div id="uploadToast" class="toast align-items-center text-white bg-info border-0" role="alert" aria-live="assertive" aria-atomic="true">
         <div class="d-flex">
@@ -144,22 +82,31 @@
     </div>
 </div>
 
-{% if task_id %}
-    <script>
-        const taskId = "{{ task_id }}";
-        console.log("Assigned taskId for polling:", taskId);
-    </script>
-{% else %}
-    <script>console.log("No taskId assigned");</script>
-{% endif %}
+<!-- PERBAIKAN: Pass data dari backend ke JavaScript -->
+<script>
+    // Pass valid task IDs dari backend
+    const tasksFromBackend = {{ tasksFromBackend | tojson | safe }};
+    
+    // Pass current task ID jika ada
+    {% if task_id %}
+    const taskId = "{{ task_id }}";
+    {% else %}
+    const taskId = null;
+    {% endif %}
+    
+    console.log('📋 Tasks from backend:', tasksFromBackend);
+    console.log('🎯 Current task ID:', taskId);
+</script>
 
 <script>
-    // Global variables and functions
+    // ==================== GLOBAL VARIABLES ====================
     const errorList = {}; 
     const validationErrorList = {}; 
     let taskMetadataCache = {};
-    let dataTable = null;; // Global DataTable instance
+    let dataTable = null;
 
+    // ==================== UTILITY FUNCTIONS ====================
+    
     function ensureStringData(data) {
         if (data === null || data === undefined) {
             return '';
@@ -189,177 +136,11 @@
         return String(data);
     }
 
-    // Global function declarations - MOVED OUTSIDE OF DOCUMENT READY
-    function updateOrAddRowToTable(taskId, filename, currentDate, metadata = null) {
-        if (!dataTable) {
-            console.warn('DataTable not available, skipping row update');
-            return;
-        }
-
-        try {
-            const existingRow = document.getElementById(`progress-bar-${taskId}`);
-            if (existingRow) {
-                const row = existingRow.closest('tr');
-                const cells = row.querySelectorAll('td');
-                
-                if (metadata && cells.length >= 3) {
-                    cells[0].textContent = ensureStringData(metadata.namaFileUpload || filename || '');
-                    cells[1].textContent = ensureStringData(metadata.periodeData || '-');
-                    cells[2].textContent = ensureStringData(metadata.uploadDate || currentDate || '');
-                }
-                return;
-            }
-
-            // Create new row
-            const displayName = ensureStringData(metadata?.namaFileUpload || filename);
-            const displayPeriode = ensureStringData(metadata?.periodeData || '-');
-            const displayDate = ensureStringData(metadata?.uploadDate || currentDate);
-            const safeTaskId = String(taskId).replace(/[^a-zA-Z0-9-_]/g, '');
-
-            const progressHtml = `
-                <div class="progress" style="height: 18px;">
-                    <div id="progress-bar-${safeTaskId}" 
-                        class="progress-bar progress-bar-striped progress-bar-animated" 
-                        role="progressbar" 
-                        style="width: 0%;" 
-                        aria-valuenow="0" 
-                        aria-valuemin="0" 
-                        aria-valuemax="100">
-                        0%
-                    </div>
-                </div>
-            `;
-
-            const downloadHtml = `
-                <button id="download-btn-${safeTaskId}" 
-                        class="btn btn-secondary btn-sm" 
-                        disabled>
-                    <i class="fas fa-spinner fa-spin"></i> Processing
-                </button>
-            `;
-
-            const rowData = [
-                displayName,
-                displayPeriode,
-                displayDate,
-                progressHtml,
-                downloadHtml
-            ];
-
-            try {
-                const newRow = dataTable.row.add(rowData);
-                const rowNode = newRow.draw(false).node(); // PERBAIKAN: draw(false) untuk tidak reset pagination
-                $(rowNode).prependTo(dataTable.table().body());
-                
-                console.log(`✅ Row added for task: ${taskId}`);
-            } catch (addError) {
-                console.error('❌ Error adding row:', addError);
-                addRowDirectly(displayName, displayPeriode, displayDate, safeTaskId);
-            }
-            
-        } catch (error) {
-            console.error('❌ Error in updateOrAddRowToTable:', error);
-        }
-    }
-
-    function addRowDirectly(displayName, displayPeriode, displayDate, safeTaskId) {
-        try {
-            const tableBody = document.querySelector('#uploadTable tbody');
-            const newRow = document.createElement('tr');
-            
-            newRow.innerHTML = `
-                <td>${displayName}</td>
-                <td>${displayPeriode}</td>
-                <td>${displayDate}</td>
-                <td>
-                    <div class="progress" style="height: 18px;">
-                        <div id="progress-bar-${safeTaskId}" 
-                            class="progress-bar progress-bar-striped progress-bar-animated" 
-                            role="progressbar" 
-                            style="width: 0%;" 
-                            aria-valuenow="0" 
-                            aria-valuemin="0" 
-                            aria-valuemax="100">
-                            0%
-                        </div>
-                    </div>
-                </td>
-                <td>
-                    <button id="download-btn-${safeTaskId}" 
-                            class="btn btn-secondary btn-sm" 
-                            disabled>
-                        <i class="fas fa-spinner fa-spin"></i> Processing
-                    </button>
-                </td>
-            `;
-            
-            tableBody.insertBefore(newRow, tableBody.firstChild);
-            console.log(`✅ Row added directly for task: ${safeTaskId}`);
-            
-        } catch (directError) {
-            console.error('❌ Error adding row directly:', directError);
-        }
-    }
-
-    function debugDataTableState() {
-        console.log('=== DataTable Debug Info ===');
-        console.log('Is DataTable:', $.fn.DataTable.isDataTable('#uploadTable'));
-        console.log('Table element exists:', document.getElementById('uploadTable') !== null);
-        
-        if ($.fn.DataTable.isDataTable('#uploadTable')) {
-            const table = $('#uploadTable').DataTable();
-            console.log('Row count:', table.rows().count());
-            console.log('Column count:', table.columns().count());
-            
-            // Check data types in each row
-            table.rows().every(function(index) {
-                const data = this.data();
-                console.log(`Row ${index} data types:`, data.map((item, i) => `Col${i}: ${typeof item}`));
-            });
-        }
-        console.log('==============================');
-    }
-
-    function removeTaskRow(taskId) {
-        if (!dataTable) {
-            console.warn('DataTable not available');
-            return;
-        }
-
-        try {
-            taskId = (taskId || "").trim();
-            let progressBar = document.getElementById(`progress-bar-${taskId}`);
-
-            if (progressBar) {
-                const row = progressBar.closest('tr');
-                if (row) {
-                    dataTable.row(row).remove().draw(false); // PERBAIKAN: draw(false)
-                    console.log(`✅ Removed row for task: ${taskId}`);
-                }
-            } else if (taskMetadataCache[taskId]?.namaFileUpload) {
-                const filename = taskMetadataCache[taskId].namaFileUpload.trim();
-                dataTable.rows().every(function () {
-                    if (String(this.data()[0]).trim() === filename) {
-                        this.remove();
-                    }
-                });
-                dataTable.draw(false);
-                console.log(`✅ Removed row via metadata for task: ${taskId}`);
-            }
-
-            delete taskMetadataCache[taskId];
-        } catch (error) {
-            console.error('❌ Error removing row:', error);
-        }
-    }
-
     function showToast(message, type = 'success') {
         const toastEl = document.getElementById('uploadToast');
         const toastBody = toastEl.querySelector('.toast-body');
 
         toastBody.innerHTML = message;
-
-        // Change background according to notification type
         toastEl.classList.remove('bg-success', 'bg-danger', 'bg-warning', 'bg-info');
 
         if (type === 'error') {
@@ -380,25 +161,139 @@
         toast.show();
     }
 
-    // Modal functions
-    function showSuccessNotificationModal(message) {
-        console.log("Showing success toast:", message);
-        showToast(message, 'success');
+    // ==================== TABLE MANAGEMENT ====================
+    
+    function updateOrAddRowToTable(taskId, filename, currentDate, metadata = null, uploadSession = null) {
+        if (!dataTable) {
+            console.warn('DataTable not available, skipping row update');
+            return;
+        }
+
+        try {
+            // Generate unique progress bar ID dengan session
+            const safeTaskId = String(taskId).replace(/[^a-zA-Z0-9-_]/g, '');
+            const safeSession = uploadSession ? String(uploadSession).replace(/[^a-zA-Z0-9-_]/g, '') : 'legacy';
+            const uniqueProgressBarId = `progress-bar-${safeTaskId}-${safeSession}`;
+            
+            // Check if row already exists
+            let existingBar = document.getElementById(uniqueProgressBarId);
+            
+            if (existingBar) {
+                // Update existing row
+                const row = existingBar.closest('tr');
+                const cells = row.querySelectorAll('td');
+                
+                if (metadata && cells.length >= 3) {
+                    cells[0].textContent = ensureStringData(metadata.namaFileUpload || filename || '');
+                    cells[1].textContent = ensureStringData(metadata.periodeData || '-');
+                    cells[2].textContent = ensureStringData(metadata.uploadDate || currentDate || '');
+                }
+                return;
+            }
+
+            // Create new row
+            const displayName = ensureStringData(metadata?.namaFileUpload || filename);
+            const displayPeriode = ensureStringData(metadata?.periodeData || '-');
+            const displayDate = ensureStringData(metadata?.uploadDate || currentDate);
+
+            const progressHtml = `
+                <div class="progress" style="height: 18px;">
+                    <div id="${uniqueProgressBarId}" 
+                        class="progress-bar progress-bar-striped progress-bar-animated" 
+                        role="progressbar" 
+                        style="width: 0%;" 
+                        aria-valuenow="0" 
+                        aria-valuemin="0" 
+                        aria-valuemax="100"
+                        data-task-id="${safeTaskId}"
+                        data-upload-session="${safeSession}">
+                        0%
+                    </div>
+                </div>
+            `;
+
+            const downloadHtml = `
+                <button id="download-btn-${safeTaskId}" 
+                        class="btn btn-secondary btn-sm" 
+                        data-upload-session="${safeSession}"
+                        disabled>
+                    <i class="fas fa-spinner fa-spin"></i> Processing
+                </button>
+            `;
+
+            const rowData = [
+                displayName,
+                displayPeriode,
+                displayDate,
+                progressHtml,
+                downloadHtml
+            ];
+
+            try {
+                // Tambahkan row ke DataTable
+                const newRow = dataTable.row.add(rowData).draw(true);
+                
+                // Setelah row ditambahkan, render HTML dengan jQuery untuk cell status dan download
+                const rowNode = newRow.node();
+                const cells = $(rowNode).find('td');
+                
+                if (cells.length >= 5) {
+                    // Render status/progress bar
+                    $(cells[3]).html(progressHtml);
+                    // Render download button
+                    $(cells[4]).html(downloadHtml);
+                }
+                
+                console.log(`✅ Row added for task: ${taskId} with session: ${uploadSession}`);
+            } catch (addError) {
+                console.error('❌ Error adding row:', addError);
+            }
+            
+        } catch (error) {
+            console.error('❌ Error in updateOrAddRowToTable:', error);
+        }
     }
 
-    function showErrorNotificationModal(message) {
-        console.log("Showing error toast:", message);
-        showToast(message, 'error');
+    function removeTaskRow(taskId) {
+        if (!dataTable) {
+            console.warn('DataTable not available');
+            return;
+        }
+
+        try {
+            taskId = (taskId || "").trim();
+            
+            // Try to find progress bar with any session
+            let progressBar = document.querySelector(`[data-task-id="${taskId}"]`);
+
+            if (progressBar) {
+                const row = progressBar.closest('tr');
+                if (row) {
+                    dataTable.row(row).remove().draw(false);
+                    console.log(`✅ Removed row for task: ${taskId}`);
+                }
+            } else if (taskMetadataCache[taskId]?.namaFileUpload) {
+                const filename = taskMetadataCache[taskId].namaFileUpload.trim();
+                dataTable.rows().every(function () {
+                    if (String(this.data()[0]).trim() === filename) {
+                        this.remove();
+                    }
+                });
+                dataTable.draw(false);
+                console.log(`✅ Removed row via metadata for task: ${taskId}`);
+            }
+
+            delete taskMetadataCache[taskId];
+        } catch (error) {
+            console.error('❌ Error removing row:', error);
+        }
     }
 
-    function showValidationErrorModal(message) {
-        console.log("Showing warning toast (validation):", message);
-        showToast(message, 'warning');
-    }
-
-    // Handle task error UI updates
+    // ==================== TASK STATUS HANDLERS ====================
+    
     function handleTaskError(taskId, errorMessage = "Error", errorType = "general_error") {
-        const progressBar = document.getElementById(`progress-bar-${taskId}`);
+        // Find progress bar dengan data-task-id attribute
+        const progressBar = document.querySelector(`[data-task-id="${taskId}"]`);
         const downloadBtn = document.getElementById(`download-btn-${taskId}`);
         
         if (progressBar) {
@@ -418,9 +313,8 @@
         errorList[taskId] = { message: errorMessage, type: errorType };
     }
 
-    // Handle task success UI updates
     function handleTaskSuccess(taskId) {
-        const progressBar = document.getElementById(`progress-bar-${taskId}`);
+        const progressBar = document.querySelector(`[data-task-id="${taskId}"]`);
         const downloadBtn = document.getElementById(`download-btn-${taskId}`);
         
         if (progressBar) {
@@ -449,45 +343,15 @@
                     </a>
                 </div>
             `;
-            
-            // Update row data
-            const row = document.getElementById(`progress-bar-${taskId}`)?.closest('tr');
-            if (row) {
-                const cells = row.querySelectorAll('td');
-                if (cells.length >= 2) {
-                    cells[0].textContent = meta.namaFileUpload;
-                    cells[1].textContent = meta.periodeData;
-                }
-            }
         }
     }
 
-    // Get existing file names from the table for client-side check
-    const existingFileNames = [
-        {% for item in data %}
-        "{{ item.namaFileUpload }}",
-        {% endfor %}
-    ];
+    // ==================== FILENAME VALIDATION ====================
+    
+    const existingFileNames = []; // Will be populated from server
 
-    function showUploadStartedToast() {
-        const toastEl = document.getElementById("uploadToast");
-        const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
-        toast.show();
-    }
-
-    document.getElementById("uploadForm").addEventListener("submit", function (e) {
-        showUploadStartedToast();
-    });
-
-    // Function to check if filename already exists
     function checkFilenameExists(filename) {
         return existingFileNames.includes(filename.trim());
-    }
-
-    // Function to show duplicate file alert
-    function showDuplicateFileAlert() {
-        const modal = new bootstrap.Modal(document.getElementById('duplicateFileModal'));
-        modal.show();
     }
 
     // Real-time validation on input
@@ -507,30 +371,20 @@
         }
     });
 
-    // Form submission validation
+    // Form submission validation - allow multiple uploads, reset button immediately after upload starts
     document.getElementById('uploadForm').addEventListener('submit', function(e) {
         const filenameInput = document.getElementById('nama_file');
         const filename = filenameInput.value.trim();
-        
-        // Client-side check
-        if (checkFilenameExists(filename)) {
-            e.preventDefault();
-            showDuplicateFileAlert();
-            filenameInput.focus();
-            return false;
-        }
-        
-        // Server-side check via AJAX before actual form submission
         e.preventDefault();
-        
         const submitBtn = document.getElementById('submitBtn');
         const originalText = submitBtn.textContent;
-        
-        // Show loading state
+        const form = this;
+
+        // Show loading state for filename check only
         submitBtn.disabled = true;
         submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
-        
-        // Check with server
+
+        // Check with server via AJAX
         fetch('/check-filename', {
             method: 'POST',
             headers: {
@@ -541,32 +395,110 @@
         .then(response => response.json())
         .then(data => {
             if (data.exists) {
-                showDuplicateFileAlert();
+                showToast('Nama file sudah ada, harap masukkan nama file yang lain', 'warning');
                 filenameInput.focus();
                 filenameInput.classList.add('is-invalid');
                 document.getElementById('filename-error').style.display = 'block';
                 submitBtn.disabled = false;
                 submitBtn.textContent = originalText;
             } else {
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-                this.submit();
+                // Submit form ASYNCHRONOUSLY using FormData
+                showToast('Upload dimulai...', 'info');
+                const formData = new FormData(form);
+
+                // Immediately reset button and allow new uploads
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+
+                // Optionally reset form fields (except flag)
+                // form.reset();
+
+                // Send upload asynchronously
+                fetch(form.action, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                .then(response => {
+                    console.log('📤 Upload response status:', response.status);
+                    console.log('📤 Response content-type:', response.headers.get('content-type'));
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(uploadData => {
+                    console.log('📥 Upload response data:', uploadData);
+                    
+                    // If backend returns a task_id, add row and fire event to start polling
+                    if (uploadData && uploadData.task_id) {
+                        console.log('✅ Task ID received:', uploadData.task_id);
+                        
+                        // Add row to DataTable immediately with progress bar at 0%
+                        const now = new Date();
+                        const currentDate = now.toLocaleString('id-ID', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        
+                        console.log('📊 Adding row to DataTable with:', {
+                            taskId: uploadData.task_id,
+                            filename: filename,
+                            currentDate: currentDate,
+                            uploadSession: uploadData.upload_session
+                        });
+                        
+                        updateOrAddRowToTable(
+                            uploadData.task_id,
+                            filename,
+                            currentDate,
+                            { namaFileUpload: filename },
+                            uploadData.upload_session || null
+                        );
+                        // Fire event to start polling
+                        const event = new CustomEvent('taskStarted', { detail: { taskId: uploadData.task_id, uploadSession: uploadData.upload_session || null } });
+                        document.dispatchEvent(event);
+                    } else {
+                        console.warn('⚠️ No task_id in response:', uploadData);
+                    }
+                    
+                    // Show success or error
+                    if (uploadData && uploadData.success) {
+                        showToast('Upload berhasil dimulai', 'success');
+                        document.getElementById('filename-error').style.display = 'none';
+                        // Optionally reset form fields (except flag)
+                        // form.reset();
+                        // Reload DataTable agar data terbaru langsung muncul
+                        if (window.dataTable && typeof window.dataTable.ajax === 'object' && typeof window.dataTable.ajax.reload === 'function') {
+                            console.log('🔄 Reloading DataTable');
+                            window.dataTable.ajax.reload(null, false);
+                        }
+                    } else if (uploadData && uploadData.error) {
+                        showToast(uploadData.error, 'error');
+                    }
+                })
+                .catch(uploadError => {
+                    showToast('Terjadi kesalahan saat upload', 'error');
+                    console.error('Upload error:', uploadError);
+                });
             }
         })
         .catch(error => {
             console.error('Error checking filename:', error);
-            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-            showUploadStartedToast();
-            this.submit();
+            showToast('Terjadi kesalahan', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
         });
     });
 
+    // ==================== DATATABLE INITIALIZATION ====================
+    
     $(document).ready(function() {
         try {
             if ($.fn.DataTable.isDataTable('#uploadTable')) {
                 $('#uploadTable').DataTable().destroy();
             }
 
-            // PERBAIKAN: Assign ke global variable
             dataTable = $('#uploadTable').DataTable({
                 processing: true,
                 serverSide: true,
@@ -594,113 +526,361 @@
                     { data: 0, title: "Nama File Upload", orderable: true },
                     { data: 1, title: "Periode Data", orderable: true },
                     { data: 2, title: "Upload Date", orderable: true, className: "text-nowrap" },
-                    { data: 3, title: "Status", orderable: false, searchable: false },
-                    { data: 4, title: "Download", orderable: false, searchable: false }
+                    { 
+                        data: 3, 
+                        title: "Status", 
+                        orderable: false, 
+                        searchable: false,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                return data;
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        data: 4, 
+                        title: "Download", 
+                        orderable: false, 
+                        searchable: false,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                return data;
+                            }
+                            return data;
+                        }
+                    }
                 ],
                 drawCallback: function(settings) {
-                    console.log('✅ DataTable drawn');
+                    console.log('✅ DataTable drawn with', this.api().rows().count(), 'rows');
                 }
             });
 
             console.log('✅ DataTable initialized');
-            
-            // Auto refresh every 30 seconds
-            setInterval(function() {
-                if (dataTable) {
-                    dataTable.ajax.reload(null, false);
-                }
-            }, 3000000); // 30 minutes
             
         } catch (error) {
             console.error('❌ Failed to initialize DataTable:', error);
         }
     });
 
+    // ==================== TASK STARTED EVENT LISTENER ====================
+    // NOTE: Variables must be defined outside DOMContentLoaded to be accessible here
+    document.addEventListener('taskStarted', function(event) {
+        const { taskId, uploadSession } = event.detail;
+        console.log(`🎯 Task started event received - Task: ${taskId}, Session: ${uploadSession}`);
+        
+        // Add to validTaskIds if not already there
+        if (typeof validTaskIds !== 'undefined' && !validTaskIds.includes(taskId)) {
+            validTaskIds.push(taskId);
+            console.log(`📋 Added task ${taskId} to valid tasks list`);
+        }
+        
+        // Start polling for this new task - wait for DOMContentLoaded if needed
+        if (typeof startAdaptivePolling === 'function') {
+            console.log(`🚀 Starting polling for newly uploaded task: ${taskId}`);
+            startAdaptivePolling(taskId);
+        } else {
+            console.warn(`⚠️ Polling not yet initialized, will retry...`);
+            setTimeout(() => {
+                if (typeof startAdaptivePolling === 'function') {
+                    console.log(`🚀 Starting polling for newly uploaded task: ${taskId} (retry)`);
+                    startAdaptivePolling(taskId);
+                }
+            }, 500);
+        }
+    });
+    
+    // ==================== PROGRESS POLLING SYSTEM ====================
+    
+    // Declare polling variables globally
+    let completedTasks = new Set();
+    let pollingIntervals = new Map();
+    let taskUploadSessions = new Map();
+    let taskStartTimes = new Map();
+    let validTaskIds = [];
+    let startAdaptivePolling = null; // Will be defined in DOMContentLoaded
+    
     document.addEventListener("DOMContentLoaded", function () {
-        const completedTasks = new Set();
-        let activeTaskCount = 0;
+        // Initialize validTaskIds with data from backend
+        validTaskIds = tasksFromBackend || [];
+        if (taskId && !validTaskIds.includes(taskId)) {
+            validTaskIds.push(taskId);
+        }
+        
+        const POLLING_CONFIG = {
+            fastInterval: 1000,
+            slowInterval: 3000,
+            maxStuckTime: 15000,
+            progressThreshold: 5
+        };
 
-        // Get task IDs from backend (you need to pass this from your template)
-        const rawTaskIds = typeof tasksFromBackend !== 'undefined' ? tasksFromBackend : [];
-        const sessionTaskId = typeof taskId !== 'undefined' ? taskId : null;
+        console.log(`📋 Starting session-aware polling for ${validTaskIds.length} tasks`);
 
-        const validTaskIds = rawTaskIds.filter(id => 
-            id && id !== 'None' && id !== 'null' && id.trim() !== ''
-        );
-
-        if (sessionTaskId && !validTaskIds.includes(sessionTaskId)) {
-            validTaskIds.push(sessionTaskId);
+        // ========== SESSION VALIDATION ==========
+        
+        function isValidUploadSession(taskId, uploadSession, currentTaskId) {
+            if (currentTaskId && taskId !== currentTaskId) {
+                console.warn(`⚠️ Task ID mismatch: expected ${currentTaskId}, got ${taskId}`);
+                return false;
+            }
+            
+            const storedSession = taskUploadSessions.get(taskId);
+            
+            if (!storedSession) {
+                taskUploadSessions.set(taskId, uploadSession);
+                taskStartTimes.set(taskId, Date.now());
+                console.log(`✅ Registered upload session ${uploadSession} for task ${taskId}`);
+                return true;
+            }
+            
+            if (storedSession !== uploadSession) {
+                console.warn(
+                    `⚠️ Upload session mismatch for task ${taskId}: ` +
+                    `stored=${storedSession}, received=${uploadSession}`
+                );
+                return false;
+            }
+            
+            return true;
         }
 
-        console.log(`📋 Starting polling for ${validTaskIds.length} tasks`);
+        // ========== PROGRESS UPDATE ==========
+        
+        function updateProgressUI(taskId, data) {
+            const uploadSession = data.upload_session;
+            const returnedTaskId = data.task_id;
+            if (!isValidUploadSession(returnedTaskId, uploadSession, taskId)) {
+                console.warn(`🚫 Ignoring progress update for mismatched session`);
+                return;
+            }
+            const safeTaskId = String(taskId).replace(/[^a-zA-Z0-9-_]/g, '');
+            const safeSession = String(uploadSession || 'legacy').replace(/[^a-zA-Z0-9-_]/g, '');
+            const progressBarId = `progress-bar-${safeTaskId}-${safeSession}`;
+            let progressBar = document.getElementById(progressBarId);
+            if (!progressBar) {
+                progressBar = document.querySelector(`[data-task-id="${safeTaskId}"]`);
+                if (progressBar && uploadSession) {
+                    progressBar.id = progressBarId;
+                    progressBar.setAttribute('data-upload-session', safeSession);
+                }
+            }
+            if (!progressBar) {
+                console.warn(`⚠️ Progress bar not found for task: ${taskId}`);
+                return;
+            }
+            const progress = Math.min(Math.max(data.progress || 0, 0), 100);
+            const status = data.status || 'processing';
+            const message = data.message || '';
+            progressBar.style.width = `${progress}%`;
+            progressBar.setAttribute('aria-valuenow', progress);
+            progressBar.setAttribute('data-upload-session', safeSession);
+            progressBar.setAttribute('data-task-id', safeTaskId);
+            if (message && progress < 100) {
+                progressBar.innerText = `${progress}% - ${message}`;
+            } else {
+                progressBar.innerText = status === 'error' ? 'Error' : `${progress}%`;
+            }
+            const isAnimated = progress < 100 && status !== 'error';
+            progressBar.classList.toggle('progress-bar-animated', isAnimated);
+            progressBar.classList.toggle('progress-bar-striped', isAnimated);
+            progressBar.classList.toggle('bg-danger', status === 'error');
+            progressBar.classList.toggle('bg-success', status === 'completed' && progress === 100);
+            const downloadBtn = document.getElementById(`download-btn-${safeTaskId}`);
+            if (downloadBtn && progress < 100 && status !== 'error') {
+                downloadBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${progress}%`;
+                downloadBtn.setAttribute('data-upload-session', safeSession);
+            }
+            // Tambahan: reload DataTable jika status completed/error
+            if ((status === 'completed' || status === 'error') && window.dataTable && typeof window.dataTable.ajax === 'object' && typeof window.dataTable.ajax.reload === 'function') {
+                setTimeout(function() {
+                    window.dataTable.ajax.reload(null, false);
+                }, 500);
+            }
+        }
+
+        // ========== CLEANUP STALE BARS ==========
+        
+        function cleanupStaleProgressBars() {
+            const currentTime = Date.now();
+            const STALE_THRESHOLD = 300000; // 5 minutes
+            
+            document.querySelectorAll('[id^="progress-bar-"]').forEach(bar => {
+                const barTaskId = bar.getAttribute('data-task-id');
+                const barSession = bar.getAttribute('data-upload-session');
+                
+                if (!barTaskId) return;
+                
+                const isActive = validTaskIds.includes(barTaskId);
+                const startTime = taskStartTimes.get(barTaskId);
+                const currentSession = taskUploadSessions.get(barTaskId);
+                
+                if (!isActive || 
+                    (currentSession && barSession && barSession !== currentSession) ||
+                    (startTime && currentTime - startTime > STALE_THRESHOLD)) {
+                    
+                    console.log(`🧹 Removing stale progress bar: ${bar.id}`);
+                    const row = bar.closest('tr');
+                    if (row && dataTable) {
+                        dataTable.row(row).remove().draw(false);
+                    }
+                }
+            });
+        }
+
+        // ========== ADAPTIVE POLLING ==========
+        
+        startAdaptivePolling = function(taskId) {
+            let currentInterval = POLLING_CONFIG.fastInterval;
+            let consecutiveErrors = 0;
+            const MAX_CONSECUTIVE_ERRORS = 5;
+            
+            function poll() {
+                fetch(`/progress-status/${taskId}`, {
+                    method: 'GET',
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    consecutiveErrors = 0;
+                    
+                    const uploadSession = data.upload_session;
+                    const returnedTaskId = data.task_id || taskId;
+                    
+                    console.log(
+                        `📊 Task ${taskId} - Progress: ${data.progress}% - ` +
+                        `Status: ${data.status} - Session: ${uploadSession}`
+                    );
+
+                    if (!isValidUploadSession(returnedTaskId, uploadSession, taskId)) {
+                        console.warn(`🚫 Ignoring update from different upload session`);
+                        if (pollingIntervals.has(taskId)) {
+                            clearTimeout(pollingIntervals.get(taskId));
+                            pollingIntervals.delete(taskId);
+                        }
+                        return;
+                    }
+
+                    if (data.metadata) {
+                        const sanitized = {};
+                        Object.keys(data.metadata).forEach(key => {
+                            sanitized[key] = ensureStringData(data.metadata[key]);
+                        });
+                        taskMetadataCache[taskId] = sanitized;
+                        
+                        updateOrAddRowToTable(
+                            taskId, 
+                            sanitized.namaFileUpload,
+                            sanitized.uploadDate, 
+                            sanitized,
+                            uploadSession
+                        );
+                    }
+
+                    updateProgressUI(taskId, data);
+
+                    if (data.completed && data.should_redirect) {
+                        console.log(`✅ Task ${taskId} completed with status: ${data.status}`);
+                        
+                        if (pollingIntervals.has(taskId)) {
+                            clearTimeout(pollingIntervals.get(taskId));
+                            pollingIntervals.delete(taskId);
+                        }
+                        
+                        completedTasks.add(taskId);
+                        taskUploadSessions.delete(taskId);
+                        taskStartTimes.delete(taskId);
+                        
+                        if (data.error) {
+                            const errorMsg = data.error_message || data.message || 'Error';
+                            const errorType = data.error_type || 'general_error';
+                            
+                            if (errorType === 'validation_error') {
+                                removeTaskRow(taskId);
+                                showToast(errorMsg, 'warning');
+                            } else {
+                                handleTaskError(taskId, errorMsg, errorType);
+                                showToast(errorMsg, 'error');
+                            }
+                        } else {
+                            handleTaskSuccess(taskId);
+                            showToast('File berhasil diproses!', 'success');
+                            
+                            if (dataTable) {
+                                setTimeout(() => {
+                                    dataTable.ajax.reload(null, false);
+                                }, 2000);
+                            }
+                        }
+                        return;
+                    }
+                    
+                    if (data.status === 'not_found' || data.status === 'expired') {
+                        console.warn(`⚠️ Task ${taskId} ${data.status}`);
+                        if (pollingIntervals.has(taskId)) {
+                            clearTimeout(pollingIntervals.get(taskId));
+                            pollingIntervals.delete(taskId);
+                        }
+                        
+                        if (data.status === 'not_found') {
+                            handleTaskError(taskId, data.message || 'Task tidak ditemukan', 'system_error');
+                        }
+                        return;
+                    }
+                    
+                    const timeoutId = setTimeout(poll, currentInterval);
+                    pollingIntervals.set(taskId, timeoutId);
+                })
+                .catch(err => {
+                    consecutiveErrors++;
+                    console.error(`❌ Polling error for ${taskId} (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, err);
+                    
+                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                        console.error(`❌ Too many errors for ${taskId}, stopping polling`);
+                        if (pollingIntervals.has(taskId)) {
+                            clearTimeout(pollingIntervals.get(taskId));
+                            pollingIntervals.delete(taskId);
+                        }
+                        handleTaskError(taskId, 'Connection error', 'system_error');
+                        return;
+                    }
+                    
+                    const retryInterval = Math.min(currentInterval * 2, 10000);
+                    const timeoutId = setTimeout(poll, retryInterval);
+                    pollingIntervals.set(taskId, timeoutId);
+                });
+            }
+            
+            poll();
+        };
+
+        // ========== START POLLING ==========
+        
+        cleanupStaleProgressBars();
 
         validTaskIds.forEach(taskId => {
-            const interval = setInterval(() => {
-                fetch(`/progress-status/${taskId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log(`📊 Task ${taskId}:`, data);
-
-                        // PERBAIKAN: Cache dan sanitasi metadata
-                        if (data.metadata) {
-                            const sanitized = {};
-                            Object.keys(data.metadata).forEach(key => {
-                                sanitized[key] = ensureStringData(data.metadata[key]);
-                            });
-                            taskMetadataCache[taskId] = sanitized;
-                            
-                            updateOrAddRowToTable(taskId, sanitized.namaFileUpload, 
-                                                sanitized.uploadDate, sanitized);
-                        }
-
-                        // Update progress bar
-                        const progressBar = document.getElementById(`progress-bar-${taskId}`);
-                        if (progressBar) {
-                            const progress = data.progress || 0;
-                            const status = data.status || 'processing';
-                            
-                            progressBar.style.width = `${progress}%`;
-                            progressBar.setAttribute('aria-valuenow', progress);
-                            progressBar.innerText = status === 'error' ? 'Error' : `${progress}%`;
-                            
-                            progressBar.classList.toggle('progress-bar-animated', 
-                                progress < 100 && status !== 'error');
-                            progressBar.classList.toggle('bg-danger', status === 'error');
-                        }
-
-                        // Handle completion
-                        if (data.completed && data.should_redirect) {
-                            clearInterval(interval);
-                            
-                            if (data.error) {
-                                const errorMsg = data.error_message || data.message || 'Error';
-                                const errorType = data.error_type || 'general_error';
-                                
-                                if (errorType === 'validation_error') {
-                                    removeTaskRow(taskId);
-                                    showToast(errorMsg, 'warning');
-                                } else {
-                                    handleTaskError(taskId, errorMsg, errorType);
-                                    showToast(errorMsg, 'error');
-                                }
-                            } else {
-                                handleTaskSuccess(taskId);
-                                showToast('File berhasil diproses!', 'success');
-                            }
-                        } else if (data.status === 'not_found') {
-                            clearInterval(interval);
-                            handleTaskError(taskId, 'Task tidak ditemukan', 'system_error');
-                        }
-                    })
-                    .catch(err => {
-                        console.error(`❌ Polling error for ${taskId}:`, err);
-                        clearInterval(interval);
-                        handleTaskError(taskId, 'Gagal mengambil status', 'system_error');
-                    });
-            }, 3000);
+            if (!completedTasks.has(taskId)) {
+                console.log(`🚀 Starting session-aware polling for task: ${taskId}`);
+                startAdaptivePolling(taskId);
+            }
+        });
+        
+        setInterval(cleanupStaleProgressBars, 60000);
+        
+        window.addEventListener('beforeunload', () => {
+            pollingIntervals.forEach((timeoutId, taskId) => {
+                clearTimeout(timeoutId);
+                console.log(`🧹 Cleaned up polling for task: ${taskId}`);
+            });
         });
     });
 </script>
+
 <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
 
 {% endblock %}
