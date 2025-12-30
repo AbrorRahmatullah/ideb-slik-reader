@@ -1,0 +1,740 @@
+{% extends "header.html" %}
+
+{% block title %}User Management{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <!-- Page Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h2 class="mb-1 fw-bold">User Management</h2>
+                    <p class="text-muted mb-0">Manage system users, roles, and permissions</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <div class="rounded-circle bg-primary bg-opacity-10 p-3">
+                                <i class="bi bi-people-fill text-primary fs-4"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="text-muted mb-1">Total Users</h6>
+                            <h3 class="mb-0 fw-bold" id="totalUsers">0</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <div class="rounded-circle bg-danger bg-opacity-10 p-3">
+                                <i class="bi bi-shield-fill-check text-danger fs-4"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="text-muted mb-1">Administrators</h6>
+                            <h3 class="mb-0 fw-bold" id="totalAdmins">0</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <div class="rounded-circle bg-info bg-opacity-10 p-3">
+                                <i class="bi bi-person-badge-fill text-info fs-4"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="text-muted mb-1">Regular Users</h6>
+                            <h3 class="mb-0 fw-bold" id="totalRegularUsers">0</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="flex-shrink-0">
+                            <div class="rounded-circle bg-success bg-opacity-10 p-3">
+                                <i class="bi bi-file-earmark-bar-graph-fill text-success fs-4"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="text-muted mb-1">Full Report Access</h6>
+                            <h3 class="mb-0 fw-bold" id="totalFullAccess">0</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Users Table Card -->
+    <div class="card-body border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom py-3">
+            <button type="button" class="btn btn-primary btn-lg shadow-sm" onclick="showCreateModal()">
+                <i class="bi bi-plus-circle me-2"></i>Create New User
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table id="userTable" class="table table-hover align-middle mb-0" style="width:100%">
+                    <thead class="bg-light">
+                        <tr>
+                            <th class="px-4 py-3 text-muted fw-semibold">Username</th>
+                            <th class="px-4 py-3 text-muted fw-semibold">Full Name</th>
+                            <th class="px-4 py-3 text-muted fw-semibold">Email</th>
+                            <th class="px-4 py-3 text-muted fw-semibold">Role</th>
+                            <th class="px-4 py-3 text-muted fw-semibold">Report Access</th>
+                            <th class="px-4 py-3 text-muted fw-semibold">Created Date</th>
+                            <th class="px-4 py-3 text-muted fw-semibold text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Create/Edit User -->
+<div class="modal fade" id="userModal" tabindex="-1" aria-labelledby="userModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header border-bottom bg-light">
+                <div>
+                    <h5 class="modal-title fw-bold" id="userModalLabel">Create New User</h5>
+                    <p class="text-muted small mb-0" id="userModalSubtitle">Fill in the information below</p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <form id="userForm">
+                    <input type="hidden" id="userId" name="id">
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="username" class="form-label fw-semibold">
+                                <i class="bi bi-person-circle me-1"></i>Username 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control form-control-lg" id="username" name="username" 
+                                   placeholder="Enter username" required>
+                            <div class="form-text">Username must be unique</div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="modal_fullname" class="form-label fw-semibold">
+                                <i class="bi bi-person-fill me-1"></i>Full Name 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control form-control-lg" id="modal_fullname" name="modal_fullname" 
+                                   placeholder="Enter full name" required>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="email" class="form-label fw-semibold">
+                            <i class="bi bi-envelope-fill me-1"></i>Email Address 
+                            <span class="text-danger">*</span>
+                        </label>
+                        <input type="email" class="form-control form-control-lg" id="email" name="email" 
+                               placeholder="user@example.com" required>
+                        <div class="form-text">Email must be unique and valid</div>
+                    </div>
+                    
+                    <div class="row" id="passwordSection">
+                        <div class="col-md-6 mb-3" id="passwordGroup">
+                            <label for="password" class="form-label fw-semibold">
+                                <i class="bi bi-lock-fill me-1"></i>Password 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <div class="position-relative">
+                                <input type="password" class="form-control form-control-lg password-input" 
+                                       id="password" name="password" placeholder="Enter password">
+                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"></i>
+                            </div>
+                            <div class="password-requirements mt-2 p-2 bg-light rounded">
+                                <small class="d-block mb-1"><span id="lengthCheck" class="invalid">❌</span> Minimal 9 characters</small>
+                                <small class="d-block mb-1"><span id="capitalCheck" class="invalid">❌</span> Contains uppercase letter</small>
+                                <small class="d-block mb-1"><span id="numberCheck" class="invalid">❌</span> Contains number</small>
+                                <small class="d-block"><span id="specialCheck" class="invalid">❌</span> Contains special character (@$!%*?&)</small>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3" id="confirmPasswordGroup">
+                            <label for="password_confirm" class="form-label fw-semibold">
+                                <i class="bi bi-lock-fill me-1"></i>Confirm Password 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <div class="position-relative">
+                                <input type="password" class="form-control form-control-lg password-input" 
+                                       id="password_confirm" name="password_confirm" placeholder="Re-enter password">
+                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"></i>
+                            </div>
+                            <small id="matchCheck" class="text-danger" style="display:none;">
+                                <i class="bi bi-exclamation-circle me-1"></i>Passwords do not match
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="role_access" class="form-label fw-semibold">
+                                <i class="bi bi-shield-check me-1"></i>Role Access 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select form-select-lg" id="role_access" name="role_access" required>
+                                <option value="">Select role...</option>
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="report_access" class="form-label fw-semibold">
+                                <i class="bi bi-file-earmark-bar-graph me-1"></i>Report Access 
+                                <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select form-select-lg" id="report_access" name="report_access" required>
+                                <option value="">Select access level...</option>
+                                <option value="0">No Access</option>
+                                <option value="1">View Only</option>
+                                <option value="2">Full Access</option>
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-top bg-light">
+                <button type="button" class="btn btn-secondary btn-lg px-4" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle me-2"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary btn-lg px-4" onclick="saveUser()">
+                    <i class="bi bi-check-circle me-2"></i>Save User
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="static/bootstrap-icons.css">
+
+<style>
+    /* Custom Styles */
+    body {
+        background-color: #f8f9fa;
+    }
+
+    .card {
+        border-radius: 12px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.1) !important;
+    }
+
+    .password-toggle {
+        position: absolute;
+        right: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        cursor: pointer;
+        color: #6c757d;
+        font-size: 1.2rem;
+        z-index: 10;
+        transition: color 0.2s ease;
+    }
+
+    .password-toggle:hover {
+        color: #495057;
+    }
+
+    .password-input {
+        padding-right: 45px;
+    }
+
+    .password-requirements span.valid {
+        color: #28a745;
+    }
+
+    .password-requirements span.invalid {
+        color: #dc3545;
+    }
+
+    .action-buttons {
+        white-space: nowrap;
+    }
+
+    .table > :not(caption) > * > * {
+        padding: 1rem;
+    }
+
+    .table tbody tr {
+        transition: background-color 0.2s ease;
+    }
+
+    .table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    .btn {
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn-secondary {
+        width: 100%;
+        background: #c21a1aff;
+        border: none;
+        padding: 10px;
+        border-radius: 6px;
+        transition: background 0.3s;
+        font-size: 1.125rem;
+        cursor: pointer;
+    }
+
+    .badge {
+        padding: 0.5rem 0.75rem;
+        font-weight: 500;
+        border-radius: 6px;
+    }
+
+    .modal-content {
+        border-radius: 16px;
+    }
+
+    .form-control:focus, .form-select:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+    }
+
+    .form-control-lg, .form-select-lg {
+        border-radius: 8px;
+    }
+
+    /* DataTables Custom Styling */
+    .dataTables_wrapper .dataTables_length select,
+    .dataTables_wrapper .dataTables_filter input {
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .dataTables_wrapper .dataTables_filter input:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+        outline: none;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+        background: #0d6efd !important;
+        border-color: #0d6efd !important;
+        color: white !important;
+        border-radius: 8px;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        border-radius: 8px !important;
+        margin: 0 2px;
+    }
+
+    /* Statistics Cards Animation */
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .card {
+        animation: fadeInUp 0.5s ease;
+    }
+</style>
+
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap5.min.js"></script>
+
+<script>
+    var table;
+    var isEditMode = false;
+
+    $(document).ready(function() {
+        loadUsers();
+    });
+
+    function loadUsers() {
+        if (table) {
+            table.destroy();
+        }
+
+        table = $('#userTable').DataTable({
+            ajax: {
+                url: '/api/users',
+                dataSrc: function(json) {
+                    updateStatistics(json);
+                    return json;
+                }
+            },
+            columns: [
+                { 
+                    data: 'username',
+                    className: 'px-4',
+                    render: function(data) {
+                        return `<div class="d-flex align-items-center">
+                                    <i class="bi bi-person-circle me-2 text-primary fs-5"></i>
+                                    <span class="fw-semibold">${data}</span>
+                                </div>`;
+                    }
+                },
+                { 
+                    data: 'fullname',
+                    className: 'px-4'
+                },
+                { 
+                    data: 'email',
+                    className: 'px-4',
+                    render: function(data) {
+                        return `<small class="text-muted">${data}</small>`;
+                    }
+                },
+                { 
+                    data: 'role_access',
+                    className: 'px-4',
+                    render: function(data) {
+                        return data === 'admin' ? 
+                            '<span class="badge bg-danger"><i class="bi bi-shield-fill-check me-1"></i>Admin</span>' : 
+                            '<span class="badge bg-primary"><i class="bi bi-person-badge me-1"></i>User</span>';
+                    }
+                },
+                { 
+                    data: 'report_access',
+                    className: 'px-4',
+                    render: function(data) {
+                        if (data == 0) return '<span class="badge bg-secondary">No Access</span>';
+                        if (data == 1) return '<span class="badge bg-info">View Only</span>';
+                        if (data == 2) return '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Full Access</span>';
+                        return data;
+                    }
+                },
+                { 
+                    data: 'created_date',
+                    className: 'px-4',
+                    render: function(data) {
+                        if (!data) return '<span class="text-muted">-</span>';
+                        return `<small class="text-muted">${new Date(data).toLocaleString('id-ID')}</small>`;
+                    }
+                },
+                {
+                    data: null,
+                    orderable: false,
+                    className: 'action-buttons px-4 text-center',
+                    render: function(data, type, row) {
+                        return `
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-sm btn-warning" onclick="editUser(${row.id})" 
+                                        title="Edit User">
+                                    <i class="bi bi-pencil-square"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteUser(${row.id}, '${row.username}')"
+                                        title="Delete User">
+                                    <i class="bi bi-trash-fill"></i>
+                                </button>
+                            </div>
+                        `;
+                    }
+                }
+            ],
+            order: [[0, 'desc']],
+            pageLength: 10,
+            language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search users...",
+                lengthMenu: "Show _MENU_ entries per page",
+                info: "Showing _START_ to _END_ of _TOTAL_ users",
+                infoEmpty: "No users found",
+                infoFiltered: "(filtered from _MAX_ total users)",
+                paginate: {
+                    first: '<i class="bi bi-chevron-double-left"></i>',
+                    last: '<i class="bi bi-chevron-double-right"></i>',
+                    next: '<i class="bi bi-chevron-right"></i>',
+                    previous: '<i class="bi bi-chevron-left"></i>'
+                }
+            },
+            dom: '<"row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>rtip',
+            drawCallback: function() {
+                $('.dataTables_paginate > .pagination').addClass('pagination-sm');
+            }
+        });
+    }
+
+    function updateStatistics(data) {
+        const totalUsers = data.length;
+        const totalAdmins = data.filter(u => u.role_access === 'admin').length;
+        const totalRegularUsers = data.filter(u => u.role_access === 'user').length;
+        const totalFullAccess = data.filter(u => u.report_access === 2).length;
+
+        $('#totalUsers').text(totalUsers);
+        $('#totalAdmins').text(totalAdmins);
+        $('#totalRegularUsers').text(totalRegularUsers);
+        $('#totalFullAccess').text(totalFullAccess);
+    }
+
+    function showCreateModal() {
+        isEditMode = false;
+        document.getElementById('userModalLabel').textContent = 'Create New User';
+        document.getElementById('userModalSubtitle').textContent = 'Fill in the information below';
+        document.getElementById('userForm').reset();
+        document.getElementById('userId').value = '';
+        document.getElementById('passwordSection').style.display = 'block';
+        document.getElementById('password').required = true;
+        document.getElementById('password_confirm').required = true;
+        resetPasswordChecks();
+        
+        var modal = new bootstrap.Modal(document.getElementById('userModal'));
+        modal.show();
+    }
+
+    function editUser(id) {
+        isEditMode = true;
+        document.getElementById('userModalLabel').textContent = 'Edit User';
+        document.getElementById('userModalSubtitle').textContent = 'Update user information';
+        
+        fetch(`/api/users/${id}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                document.getElementById('userId').value = data.id;
+                document.getElementById('username').value = data.username;
+                document.getElementById('modal_fullname').value = data.fullname;
+                document.getElementById('email').value = data.email;
+                document.getElementById('role_access').value = data.role_access;
+                document.getElementById('report_access').value = data.report_access;
+                
+                // Hide password fields for edit
+                document.getElementById('passwordSection').style.display = 'none';
+                document.getElementById('password').required = false;
+                document.getElementById('password_confirm').required = false;
+                
+                var modal = new bootstrap.Modal(document.getElementById('userModal'));
+                modal.show();
+            })
+            .catch(error => {
+                showAlert('Error loading user data: ' + error, 'danger');
+            });
+    }
+
+    function saveUser() {
+        var form = document.getElementById('userForm');
+        
+        if (!form.checkValidity()) {
+            form.classList.add('was-validated');
+            showAlert('Please fill in all required fields', 'warning');
+            return;
+        }
+
+        var userId = document.getElementById('userId').value;
+        var username = document.getElementById('username').value;
+        var fullname = document.getElementById('modal_fullname').value;
+        var email = document.getElementById('email').value;
+        var password = document.getElementById('password').value;
+        var passwordConfirm = document.getElementById('password_confirm').value;
+        var roleAccess = document.getElementById('role_access').value;
+        var reportAccess = document.getElementById('report_access').value;
+
+        // Validate password for create mode
+        if (!isEditMode) {
+            if (!validatePasswordStrength(password)) {
+                showAlert('Password does not meet requirements', 'danger');
+                return;
+            }
+
+            if (password !== passwordConfirm) {
+                showAlert('Passwords do not match', 'danger');
+                return;
+            }
+        }
+
+        var data = {
+            username: username,
+            fullname: fullname,
+            email: email,
+            role_access: roleAccess,
+            report_access: parseInt(reportAccess)
+        };
+
+        if (!isEditMode) {
+            data.password = password;
+        }
+
+        var url = isEditMode ? `/api/users/${userId}` : '/api/users';
+        var method = isEditMode ? 'PUT' : 'POST';
+
+        // Show loading state
+        const saveBtn = event.target;
+        const originalText = saveBtn.innerHTML;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+
+        fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalText;
+            
+            if (data.success) {
+                showAlert(data.message, 'success');
+                bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
+                loadUsers();
+            } else {
+                showAlert('Error: ' + data.message, 'danger');
+            }
+        })
+        .catch(error => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalText;
+            showAlert('Error: ' + error, 'danger');
+        });
+    }
+
+    function deleteUser(id, username) {
+        if (!confirm(`Are you sure you want to delete user "${username}"?\n\nThis action cannot be undone.`)) {
+            return;
+        }
+
+        fetch(`/api/users/${id}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert(data.message, 'success');
+                loadUsers();
+            } else {
+                showAlert('Error: ' + data.message, 'danger');
+            }
+        })
+        .catch(error => {
+            showAlert('Error: ' + error, 'danger');
+        });
+    }
+
+    function togglePassword(inputId, icon) {
+        var inputField = document.getElementById(inputId);
+        
+        if (inputField.type === "password") {
+            inputField.type = "text";
+            icon.classList.remove("bi-eye-slash");
+            icon.classList.add("bi-eye");
+        } else {
+            inputField.type = "password";
+            icon.classList.remove("bi-eye");
+            icon.classList.add("bi-eye-slash");
+        }
+    }
+
+    function resetPasswordChecks() {
+        ['lengthCheck', 'capitalCheck', 'numberCheck', 'specialCheck'].forEach(id => {
+            document.getElementById(id).className = 'invalid';
+            document.getElementById(id).innerHTML = '❌';
+        });
+    }
+
+    document.getElementById('password').addEventListener('input', function() {
+        var password = this.value;
+
+        var checks = {
+            lengthCheck: password.length >= 9,
+            capitalCheck: /[A-Z]/.test(password),
+            numberCheck: /\d/.test(password),
+            specialCheck: /[@$!%*?&]/.test(password)
+        };
+
+        Object.keys(checks).forEach(key => {
+            var element = document.getElementById(key);
+            element.className = checks[key] ? 'valid' : 'invalid';
+            element.innerHTML = checks[key] ? '✅' : '❌';
+        });
+    });
+
+    document.getElementById('password_confirm').addEventListener('input', function() {
+        var password = document.getElementById('password').value;
+        var confirmPassword = this.value;
+        var matchCheck = document.getElementById('matchCheck');
+
+        if (confirmPassword && password !== confirmPassword) {
+            matchCheck.style.display = 'block';
+        } else {
+            matchCheck.style.display = 'none';
+        }
+    });
+
+    function validatePasswordStrength(password) {
+        var hasCapital = /[A-Z]/.test(password);
+        var hasNumber = /\d/.test(password);
+        var hasSpecial = /[@$!%*?&]/.test(password);
+        var isLongEnough = password.length >= 9;
+
+        return isLongEnough && hasCapital && hasNumber && hasSpecial;
+    }
+
+    function showAlert(message, type) {
+        // Create alert element
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3`;
+        alertDiv.style.zIndex = '9999';
+        alertDiv.style.minWidth = '300px';
+        alertDiv.innerHTML = `
+            <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-circle' : 'info-circle'} me-2"></i>
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        document.body.appendChild(alertDiv);
+        
+        // Auto remove after 5 seconds
+        setTimeout(() => {
+            alertDiv.remove();
+        }, 5000);
+    }
+</script>
+{% endblock %}

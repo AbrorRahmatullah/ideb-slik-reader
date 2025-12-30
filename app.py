@@ -989,71 +989,343 @@ def download_upload_zip():
         if 'conn' in locals():
             conn.close()
 
-# Register route
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    get_role_access = session.get('role_access')
-    get_fullname = session.get('fullname')
-    get_username = session.get('username')
-    get_report_access = session.get('report_access')
+# # Register route
+# @app.route('/register', methods=['GET', 'POST'])
+# def register():
+#     get_role_access = session.get('role_access')
+#     get_fullname = session.get('fullname')
+#     get_username = session.get('username')
+#     get_report_access = session.get('report_access')
     
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        password_confirm = request.form['password_confirm']
-        role_access = request.form['role_access']
-        fullname = request.form['fullname']
-        email = request.form['email']
-        report_access = request.form['report_access']
+#     if request.method == 'POST':
+#         username = request.form['username']
+#         password = request.form['password']
+#         password_confirm = request.form['password_confirm']
+#         role_access = request.form['role_access']
+#         fullname = request.form['fullname']
+#         email = request.form['email']
+#         report_access = request.form['report_access']
         
-        required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email']
-        data = {field: request.form[field] for field in required_fields}
+#         required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email']
+#         data = {field: request.form[field] for field in required_fields}
 
-        if not all(data.values()):
-            return render_alert("Please fill the empty form!", 'register', username, fullname, email)
+#         if not all(data.values()):
+#             return render_alert("Please fill the empty form!", 'register', username, fullname, email)
 
-        if password != password_confirm:
-            return render_alert("Passwords do not match.", 'register', username, fullname, email)
+#         if password != password_confirm:
+#             return render_alert("Passwords do not match.", 'register', username, fullname, email)
         
-        password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+#         password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
 
-        # Check if the username already exists
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
-        existing_user = cur.fetchone()
+#         # Check if the username already exists
+#         conn = get_db_connection()
+#         cur = conn.cursor()
+#         cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+#         existing_user = cur.fetchone()
 
-        if existing_user:
-            return render_alert("Username already exists.", 'register', username, fullname, email, role_access)
+#         if existing_user:
+#             return render_alert("Username already exists.", 'register', username, fullname, email, role_access)
         
-        cur.execute("SELECT * FROM users WHERE email = ?", (email,))
-        existing_email = cur.fetchone()
+#         cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+#         existing_email = cur.fetchone()
 
-        if existing_email:
-            return render_alert("Email is already registered.", 'register', username, fullname, email, role_access)
+#         if existing_email:
+#             return render_alert("Email is already registered.", 'register', username, fullname, email, role_access)
 
-        else:
-            # Insert new user into the database
-            cur.execute("""
-                INSERT INTO users (username, password_hash, role_access, fullname, email, report_access, created_date)
-                VALUES (?, ?, ?, ?, ?, ?, GETDATE())
-            """, (username, password_hash, role_access, fullname, email, report_access))
-            conn.commit()
-            return '''
-                <script>
-                    alert("User registered successfully.");
-                    window.location.href = "{}";
-                </script>
-            '''.format(url_for('login'))
+#         else:
+#             # Insert new user into the database
+#             cur.execute("""
+#                 INSERT INTO users (username, password_hash, role_access, fullname, email, report_access, created_date)
+#                 VALUES (?, ?, ?, ?, ?, ?, GETDATE())
+#             """, (username, password_hash, role_access, fullname, email, report_access))
+#             conn.commit()
+#             return '''
+#                 <script>
+#                     alert("User registered successfully.");
+#                     window.location.href = "{}";
+#                 </script>
+#             '''.format(url_for('login'))
 
 
+#     return render_template(
+#         'register.html',
+#         role_access=get_role_access,
+#         fullname=get_fullname,
+#         username=get_username,
+#         report_access=get_report_access
+#     )
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({'success': False, 'message': 'Resource not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'success': False, 'message': 'Internal server error'}), 500
+
+def validate_password(password):
+    """Validate password strength"""
+    if len(password) < 9:
+        return False, "Password must be at least 9 characters long"
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    if not re.search(r'[@$!%*?&]', password):
+        return False, "Password must contain at least one special character (@$!%*?&)"
+    return True, "Password is valid"
+
+def validate_email(email):
+    """Validate email format"""
+    pattern = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(pattern, email) is not None
+
+@app.route('/user-management')
+def user_management():
+    """Render user management page"""
+    username = session.get('username')
+    fullname = session.get('fullname')
+    role_access = session.get('role_access')
+    report_access = session.get('report_access')
     return render_template(
-        'register.html',
-        role_access=get_role_access,
-        fullname=get_fullname,
-        username=get_username,
-        report_access=get_report_access
-    )
+        'user_management.html',
+        username=username,
+        fullname=fullname,
+        role_access=role_access,
+        report_access=report_access
+        )
+    
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    """Get all users"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT id, username, fullname, email, role_access, report_access, created_date
+            FROM [dbo].[users]
+            ORDER BY created_date DESC
+        """
+        
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        users = []
+        for row in rows:
+            users.append({
+                'id': row.id,
+                'username': row.username,
+                'fullname': row.fullname,
+                'email': row.email,
+                'role_access': row.role_access,
+                'report_access': row.report_access,
+                'created_date': row.created_date.isoformat() if row.created_date else None
+            })
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify(users)
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['GET'])
+def get_user(user_id):
+    """Get single user by ID"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT id, username, fullname, email, role_access, report_access, created_date
+            FROM [dbo].[users]
+            WHERE id = ?
+        """
+        
+        cursor.execute(query, (user_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+        
+        user = {
+            'id': row.id,
+            'username': row.username,
+            'fullname': row.fullname,
+            'email': row.email,
+            'role_access': row.role_access,
+            'report_access': row.report_access,
+            'created_date': row.created_date.isoformat() if row.created_date else None
+        }
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify(user)
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    """Create new user"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['username', 'password', 'fullname', 'email', 'role_access', 'report_access']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'success': False, 'message': f'{field} is required'}), 400
+        
+        username = data['username']
+        password = data['password']
+        fullname = data['fullname']
+        email = data['email']
+        role_access = data['role_access']
+        report_access = data['report_access']
+        
+        # Validate email
+        if not validate_email(email):
+            return jsonify({'success': False, 'message': 'Invalid email format'}), 400
+        
+        # Validate password
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return jsonify({'success': False, 'message': message}), 400
+        
+        # Hash password
+        password_hash = bcrypt.generate_password_hash(password)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if username already exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE username = ?", (username,))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Username already exists'}), 400
+        
+        # Check if email already exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE email = ?", (email,))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Email already exists'}), 400
+        
+        # Insert new user
+        query = """
+            INSERT INTO [dbo].[users] 
+            (username, password_hash, fullname, email, role_access, report_access, created_date)
+            VALUES (?, ?, ?, ?, ?, ?, GETDATE())
+        """
+        
+        cursor.execute(query, (username, password_hash, fullname, email, role_access, report_access))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User created successfully'}), 201
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['PUT'])
+def update_user(user_id):
+    """Update existing user"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['username', 'fullname', 'email', 'role_access', 'report_access']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'success': False, 'message': f'{field} is required'}), 400
+        
+        username = data['username']
+        fullname = data['fullname']
+        email = data['email']
+        role_access = data['role_access']
+        report_access = data['report_access']
+        
+        # Validate email
+        if not validate_email(email):
+            return jsonify({'success': False, 'message': 'Invalid email format'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE id = ?", (user_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+        
+        # Check if username already exists (excluding current user)
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE username = ? AND id != ?", (username, user_id))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Username already exists'}), 400
+        
+        # Check if email already exists (excluding current user)
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE email = ? AND id != ?", (email, user_id))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'Email already exists'}), 400
+        
+        # Update user
+        query = """
+            UPDATE [dbo].[users]
+            SET username = ?, fullname = ?, email = ?, role_access = ?, report_access = ?
+            WHERE id = ?
+        """
+        
+        cursor.execute(query, (username, fullname, email, role_access, report_access, user_id))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User updated successfully'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    """Delete user"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE id = ?", (user_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+        
+        # Delete user
+        query = "DELETE FROM [dbo].[users] WHERE id = ?"
+        cursor.execute(query, (user_id,))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User deleted successfully'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # Login Route
 @app.route('/', methods=['GET', 'POST'])
@@ -1106,71 +1378,47 @@ def login():
     
     return render_template('login.html')
 
-@app.route('/change_password', methods=['GET', 'POST'])
-def change_password():
-    if 'username' not in session:
-        flash("You need to log in first.")
-        return redirect(url_for('login'))
-
-    get_role_access = session.get('role_access')
-    get_fullname = session.get('fullname')
-    get_username = session.get('username')
-
-    if request.method == 'POST':
-        current_password = request.form['current_password']
-        new_password = request.form['new_password']
-        confirm_password = request.form['confirm_password']
-        username = session['username']
-
-        if new_password != confirm_password:
-            # flash("New passwords do not match.")
-            # return render_template('change_password.html')
-            return '''
-                <script>
-                    alert("New passwords do not match.");
-                    window.location.href = "/change_password"; // Redirect setelah alert
-                </script>
-            '''
-
+@app.route('/api/users/<int:user_id>/change-password', methods=['PUT'])
+def change_password(user_id):
+    """Change user password"""
+    try:
+        data = request.get_json()
+        
+        if 'password' not in data or not data['password']:
+            return jsonify({'success': False, 'message': 'Password is required'}), 400
+        
+        password = data['password']
+        
+        # Validate password
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return jsonify({'success': False, 'message': message}), 400
+        
+        # Hash password
+        password_hash = bcrypt.generate_password_hash(password)
+        
         conn = get_db_connection()
-        cur = conn.cursor()
-
-        # Fetch the current hashed password from the database
-        cur.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
-        user = cur.fetchone()
-
-        if not user or not bcrypt.check_password_hash(user[0], current_password):
-            # flash("Current password is incorrect.")
-            # return render_template('change_password.html')
-            return '''
-                    <script>
-                        alert("Current password is incorrect.");
-                        window.location.href = "/change_password"; // Redirect setelah alert
-                    </script>
-                '''
-        else:
-            # Hash the new password and update the database
-            new_password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
-            cur.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, username))
-            conn.commit()
-            # flash("Password changed successfully.")
-            # return render_template('upload.html')
-            return '''
-                <script>
-                    alert("Password changed successfully.");
-                    window.location.href = "/upload"; // Redirect setelah alert
-                </script>
-            '''
-            
-        cur.close()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE id = ?", (user_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+        
+        # Update password
+        query = "UPDATE [dbo].[users] SET password_hash = ? WHERE id = ?"
+        cursor.execute(query, (password_hash, user_id))
+        conn.commit()
+        
+        cursor.close()
         conn.close()
-
-    return render_template(
-        'change_password.html',
-        role_access=get_role_access,
-        fullname=get_fullname,
-        username=get_username
-    )
+        
+        return jsonify({'success': True, 'message': 'Password changed successfully'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # Logout Route
 @app.route('/logout')
@@ -3001,133 +3249,68 @@ tables = [
     "slik_fasilitas_lunas_surat_berharga"
 ]
 
-def get_data_for_display():
-    conn = get_db_connection()
-    data = []
-
-    try:
-        cursor = conn.cursor()
-
-        # Bangun query UNION ALL yang benar
-        # subqueries = [f"SELECT periodeData, username, namaFileUpload, uploadDate FROM {table}" for table in tables]
-        # union_query = " UNION ALL ".join(subqueries)
-        query = f"""
-            SELECT periodeData, namaFileUpload, uploadFolderPath, username, fullname, roleAccess, uploadDate
-            FROM slik_uploader
-            ORDER BY uploadDate DESC
-        """
-
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        columns = [col[0] for col in cursor.description]
-
-        for row in rows:
-            item = dict(zip(columns, row))
-            try:
-                dt = parser.parse(str(item.get("uploadDate")))
-                item["uploadDate_raw"] = dt.strftime('%Y-%m-%d %H:%M:%S.%f')
-                item["uploadDate"] = dt.strftime('%d %B %Y, %H:%M')
-            except Exception as e:
-                print(f"Gagal parse uploadDate: {item.get('uploadDate')}, error: {e}")
-                item["uploadDate_raw"] = str(item.get("uploadDate") or "")
-                item["uploadDate"] = str(item.get("uploadDate") or "")
-
-            # 🔹 Pastikan semua kolom lain string
-            for key in ["periodeData", "namaFileUpload", "uploadFolderPath", "username", "fullname", "roleAccess"]:
-                if key in item and item[key] is not None:
-                    item[key] = str(item[key])
-                else:
-                    item[key] = ""
-
-            data.append(item)
-
-    except Exception as e:
-        print(f"Error getting display data: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-    return data
-
-# Perbaikan untuk fungsi get_progress_status
+# Perbaikan untuk fungsi get_progress_status dengan timeout protection
 @app.route('/progress-status/<task_id>')
 def get_progress_status(task_id):
+    """
+    Get progress status dengan ultra-fast response dan minimal locking.
+    FIXES:
+    - Reduced lock time to < 1ms
+    - Simple data structure
+    - No complex validations
+    - Fast-fail on missing task
+    """
     try:
-        # Validate task exists in registry
-        with task_id_registry_lock:
-            task_info = task_id_registry.get(task_id)
-            if not task_info:
-                return jsonify({
-                    'progress': 0,
-                    'progress_bars': {'bar1': 0, 'bar2': 0},
-                    'status': 'not_found',
-                    'message': 'Task not found or expired',
-                    'timestamp': float(time.time()),
-                    'error': True
-                }), 404
+        # PERBAIKAN: Single lock acquisition dengan minimal processing
+        response_data = None
         
-        # Check in task_progress
-        if task_id in task_progress:
-            with task_progress_lock:
-                progress_data = task_progress[task_id].copy()
+        with task_progress_lock:
+            if task_id in task_progress:
+                # Quick copy of essential data only
+                progress_data = task_progress[task_id]
+                response_data = {
+                    'progress': int(progress_data.get('progress', 0)),
+                    'status': str(progress_data.get('status', 'processing')),
+                    'timestamp': float(progress_data.get('timestamp', time.time())),
+                    'upload_session': progress_data.get('upload_session'),
+                    'task_id': task_id,
+                    'message': progress_data.get('message', ''),
+                    'progress_bars': progress_data.get('progress_bars', {}),
+                    'metadata': progress_data.get('temp_metadata', {})
+                }
+        
+        # Process response outside lock
+        if response_data:
+            progress = response_data['progress']
+            status = response_data['status']
             
-            # Add upload_session to response for validation
-            response = {
-                'progress': int(progress_data.get('progress', 0)),
-                'status': str(progress_data.get('status', 'processing')).lower(),
-                'timestamp': float(progress_data.get('timestamp', time.time())),
-                'upload_session': progress_data.get('upload_session'),  # For frontend validation
-                'task_id': task_id  # Explicit task ID for validation
-            }
-            
-            # Progress bars
-            if 'progress_bars' in progress_data:
-                response['progress_bars'] = progress_data['progress_bars']
-            else:
-                main_progress = int(progress_data.get('progress', 0))
-                response['progress_bars'] = {'bar1': main_progress, 'bar2': main_progress}
-            
-            # Metadata
-            metadata = progress_data.get('temp_metadata')
-            if metadata:
-                sanitized = {}
-                for key, value in metadata.items():
-                    sanitized[key] = str(value) if value is not None else ''
-                response['metadata'] = sanitized
-            
-            # Completed status
-            if response['status'] == 'completed':
-                response.update({
+            # Add completion flags
+            if status == 'completed':
+                response_data.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-success',
-                    'message': progress_data.get('message', 'Upload berhasil diproses'),
                     'final_message': 'Upload berhasil diproses',
                     'error': False
                 })
-            
-            # Error status
-            elif response['status'] == 'error':
-                response.update({
+            elif status == 'error':
+                response_data.update({
                     'completed': True,
                     'should_redirect': True,
                     'redirect_url': '/upload-big-size',
                     'error': True,
-                    'message': progress_data.get('message', 'Unknown error'),
-                    'error_type': progress_data.get('error_type', 'general_error')
+                    'error_type': response_data.get('error_type', 'general_error')
                 })
             
-            return jsonify(response)
+            return jsonify(response_data)
         
-        # Check in task_results
-        elif task_id in task_results:
+        # Check in task_results (fallback)
+        if task_id in task_results:
             result = task_results[task_id]
             
             response = {
                 'progress': 100,
-                'progress_bars': {'bar1': 100, 'bar2': 100},
                 'timestamp': float(time.time()),
-                'upload_session': task_info.get('upload_session'),
                 'task_id': task_id
             }
             
@@ -3153,30 +3336,27 @@ def get_progress_status(task_id):
             
             return jsonify(response)
         
-        # Task not found in memory but exists in registry
-        else:
-            return jsonify({
-                'progress': 0,
-                'progress_bars': {'bar1': 0, 'bar2': 0},
-                'status': 'expired',
-                'message': 'Task data expired from memory',
-                'timestamp': float(time.time()),
-                'error': True,
-                'upload_session': task_info.get('upload_session'),
-                'task_id': task_id
-            }), 404
+        # Task not found
+        return jsonify({
+            'progress': 0,
+            'status': 'not_found',
+            'message': 'Task not found',
+            'timestamp': float(time.time()),
+            'error': True,
+            'task_id': task_id
+        }), 404
     
     except Exception as e:
         app.logger.error(f"❌ Error in get_progress_status: {e}")
         return jsonify({
             'progress': 0,
-            'progress_bars': {'bar1': 0, 'bar2': 0},
             'status': 'error',
             'message': 'Server error',
             'error': True,
+            'task_id': task_id,
             'timestamp': float(time.time())
         }), 500
-
+        
 # Fungsi untuk mengekspor data tabel ke Excel (versi sederhana)
 def export_to_excel(periodeData, username, namaFileUpload, uploadDate):
         
@@ -3390,89 +3570,41 @@ def upload_big_size_file():
     if request.method == 'GET':
         show_alert = session.pop('upload_done', False)
         show_processing_alert = session.pop('show_processing_alert', False)
-
-        # Ambil data dari DB
-        all_data = get_data_for_display()
-
-        # Tambahkan task yang sedang berjalan
-        in_progress_tasks = []
-        with task_progress_lock:
-            for tid, v in task_progress.items():
-                # Validasi task masih aktif
-                if not is_task_active(tid):
-                    continue
-                
-                status = v.get('status', 'processing')
-                if status == 'processing' and 'temp_metadata' in v:
-                    metadata = v['temp_metadata'].copy()
-                    metadata['task_id'] = tid
-                    metadata['upload_session'] = v.get('upload_session')  # Tambahkan session
-                    in_progress_tasks.append(metadata)
-
-        all_data = in_progress_tasks + all_data
-
-        # Siapkan progres task
-        current_task_progress = {}
+        
+        # HANYA collect active task IDs untuk user ini
         valid_task_ids = []
         
-        for item in all_data:
-            if not all(key in item for key in ['username', 'namaFileUpload']):
-                continue
-
-            task_id = item.get('task_id')
-            
-            # Cek task_id eksplisit
-            if task_id:
-                # Validasi task masih ada dan aktif
-                with task_id_registry_lock:
-                    if task_id in task_id_registry:
-                        with task_progress_lock:
-                            if task_id in task_progress:
-                                current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
-                                valid_task_ids.append(task_id)
-                    elif task_id in task_results:
-                        # Task sudah selesai tapi masih di results
-                        current_task_progress[task_id] = 100
-                        valid_task_ids.append(task_id)
-            else:
-                # PERBAIKAN: Cari task berdasarkan metadata dengan validasi lebih ketat
-                key = f"{item['username']}_{item['namaFileUpload']}"
-                
-                with task_progress_lock:
-                    matched = []
-                    for tid, v in task_progress.items():
-                        stored_key = v.get('key', '')
-                        # Match berdasarkan username dan nama file
-                        if stored_key.startswith(key):
-                            # Validasi task masih aktif
-                            if is_task_active(tid):
-                                matched.append(tid)
-                    
-                    if matched:
-                        # Ambil task terbaru jika ada multiple match
-                        task_id = matched[-1]  # Task terakhir yang dibuat
-                        item['task_id'] = task_id
-                        current_task_progress[task_id] = task_progress[task_id].get('progress', 0)
-                        valid_task_ids.append(task_id)
-                    else:
-                        item['task_id'] = None
-                    
-        task_id = session.get('task_id', None)
-        # Jangan hapus session jika error → biarkan JS polling dan tampilkan modal
-        if task_id:
-            # Validasi task masih valid
+        try:
+            # Quick snapshot dengan minimal lock
             with task_id_registry_lock:
-                if task_id not in task_id_registry:
-                    # Task sudah expired dari registry
-                    session.pop('task_id', None)
-                    task_id = None
-                elif not is_task_active(task_id):
-                    # Task sudah tidak aktif, cek apakah selesai
-                    task_info = task_id_registry.get(task_id, {})
-                    if task_info.get('status') in ['completed', 'error']:
-                        # Task sudah selesai, bisa di-clear
+                # Get ALL active tasks untuk user ini dari registry
+                for tid, info in task_id_registry.items():
+                    if (info.get('username') == username and 
+                        info.get('status') == 'active'):
+                        valid_task_ids.append(tid)
+            
+            # Add current task_id dari session jika ada
+            session_task_id = session.get('task_id')
+            if session_task_id and session_task_id not in valid_task_ids:
+                # Validasi task masih exist di registry
+                with task_id_registry_lock:
+                    if session_task_id in task_id_registry:
+                        if task_id_registry[session_task_id].get('status') == 'active':
+                            valid_task_ids.append(session_task_id)
+                    else:
+                        # Task sudah tidak ada, clear dari session
                         session.pop('task_id', None)
-                        task_id = None
+                        session_task_id = None
+            
+            app.logger.info(
+                f"📋 GET /upload-big-size - User: {username}, "
+                f"Active tasks: {len(valid_task_ids)}"
+            )
+            
+        except Exception as e:
+            app.logger.error(f"❌ Error collecting active tasks: {e}")
+            valid_task_ids = []
+            session_task_id = None
 
         return render_template(
             'upload_big_size.html',
@@ -3482,9 +3614,9 @@ def upload_big_size_file():
             role_access=role_access,
             fullname=fullname,
             report_access=report_access,
-            task_progress=current_task_progress,
-            task_id=task_id,
-            tasksFromBackend=valid_task_ids  # Pass semua valid task IDs
+            task_progress={},  # KOSONG - akan dimuat via AJAX
+            task_id=session_task_id,  # Current task dari session
+            tasksFromBackend=valid_task_ids  # ALL active tasks untuk polling
         )
 
     elif request.method == 'POST':
@@ -3494,62 +3626,66 @@ def upload_big_size_file():
             uploaded_files = request.files.getlist('file')
 
             if not uploaded_files or not any(f.filename for f in uploaded_files):
+                error_msg = 'No files selected for upload.'
                 if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return jsonify({'success': False, 'error': 'No files selected for upload.'}), 400
-                flash("No files selected for upload.")
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                flash(error_msg)
                 return redirect(url_for('upload_big_size_file'))
-            # Validasi input
-            if not flag or not nama_file or not uploaded_files:
+            
+            if not flag or not nama_file:
+                error_msg = 'Semua field harus diisi'
                 if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return jsonify({'success': False, 'error': 'Semua field harus diisi'}), 400
-                flash('Semua field harus diisi', 'error')
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                flash(error_msg, 'error')
                 return redirect(url_for('upload_big_size_file'))
-            # Cek duplikasi nama file
+            
+            # Check duplicate filename
             if check_filename_exists(nama_file):
+                error_msg = 'Nama File sudah ada, gunakan nama lain'
                 if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return jsonify({'success': False, 'error': 'Nama File sudah ada, harap masukkan nama file yang lain'}), 400
-                flash('Nama File sudah ada, harap masukkan nama file yang lain', 'error')
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                flash(error_msg, 'error')
                 return redirect(url_for('upload_big_size_file'))
-            # Hitung total ukuran dan validasi ekstensi file
+            
             total_file_size = 0
             for f in uploaded_files:
                 if f and f.filename:
                     if not is_txt_file(f.filename):
+                        error_msg = f"File '{f.filename}' bukan file .txt"
                         if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                            return jsonify({'success': False, 'error': f"File '{f.filename}' bukan file .txt. Hanya file .txt yang diperbolehkan."}), 400
-                        return '''
-                            <script>
-                                alert("File yang diupload bukan file .txt. Hanya file .txt yang diperbolehkan.");
-                                window.location.href = "/upload-big-size";
-                            </script>
-                        '''
-                    f.seek(0, 2)  # Go to end of file
-                    total_file_size += f.tell()  # Get current position (file size)
-                    f.seek(0)  # Reset file pointer to beginning
+                            return jsonify({'success': False, 'error': error_msg}), 400
+                        return f'<script>alert("{error_msg}"); window.location.href = "/upload-big-size";</script>'
+                    
+                    f.seek(0, 2)
+                    total_file_size += f.tell()
+                    f.seek(0)
+            
             if total_file_size > MAX_FILE_BIG_SIZE:
+                error_msg = 'Total file terlalu besar. Maksimum 200MB!'
                 if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return jsonify({'success': False, 'error': 'Total file yang diupload terlalu besar. Maksimum 200MB!'}), 400
-                return '''
-                    <script>
-                        alert("Total file yang diupload terlalu besar. Maksimum 200MB!");
-                        window.location.href = "/upload-big-size";
-                    </script>
-                '''
-            # Generate unique task id
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                return f'<script>alert("{error_msg}"); window.location.href = "/upload-big-size";</script>'
+            
             task_id = generate_unique_task_id(username, nama_file)
+            
+            # Get upload session dari registry (sudah di-set oleh generate_unique_task_id)
             with task_id_registry_lock:
                 upload_session = task_id_registry[task_id]['upload_session']
+            
             current_datetime = datetime.now()
-            # Simpan file dalam bentuk bytes
+            
+            # Read files into memory
             temp_files = []
             for file in uploaded_files:
                 if file and file.filename:
                     file_content = file.read()
                     temp_files.append({
                         'filename': file.filename,
-                        'content': file_content
+                        'content': file_content,
+                        'mimetype': file.content_type or 'text/plain'
                     })
-            # Simpan task ke queue
+            
+            # Prepare user info
             user_info = {
                 "username": username,
                 "role_access": role_access,
@@ -3557,7 +3693,7 @@ def upload_big_size_file():
                 "flag": flag,
                 "nama_file": nama_file
             }
-            # Masukkan ke task_progress
+            
             with task_progress_lock:
                 task_progress[task_id] = {
                     'progress': 0,
@@ -3565,7 +3701,8 @@ def upload_big_size_file():
                     'timestamp': time.time(),
                     'created_at': time.time(),
                     'key': f"{username}_{nama_file}_{flag}",
-                    'upload_session': upload_session,  # KUNCI: Upload session untuk validasi
+                    'upload_session': upload_session,
+                    'message': 'Mempersiapkan upload...',
                     'temp_metadata': {
                         'username': username,
                         'namaFileUpload': nama_file,
@@ -3579,66 +3716,94 @@ def upload_big_size_file():
                         'db_processing': 0
                     }
                 }
-            # Masukkan ke queue untuk diproses
+            
             try:
                 task_queue.put_nowait((task_id, temp_files, user_info))
+                
                 app.logger.info(
                     f"✅ Task queued - ID: {task_id}, Session: {upload_session}, "
-                    f"User: {username}, File: {nama_file}"
+                    f"User: {username}, File: {nama_file}, Size: {total_file_size} bytes"
                 )
+                
             except queue.Full:
+                # Cleanup on queue full
                 with task_progress_lock:
                     task_progress.pop(task_id, None)
                 mark_task_error(task_id)
+                
+                error_msg = 'Antrean upload penuh. Silakan coba lagi nanti.'
+                
                 if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return jsonify({'success': False, 'error': 'Antrean upload file penuh. Silakan coba lagi nanti.'}), 400
-                flash("Antrean upload file penuh. Silakan coba lagi nanti.", "error")
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                
+                flash(error_msg, "error")
                 return redirect(url_for('upload_big_size_file'))
-            # Simpan task_id di session dan set flag upload_done
+            
             session['task_id'] = task_id
-            session['upload_session'] = upload_session  # Simpan juga session
+            session['upload_session'] = upload_session
             session['upload_done'] = False
             session['show_processing_alert'] = True
             session['temp_filename'] = nama_file
+            
             app.logger.info(
-                f"✅ Upload initiated - Task: {task_id}, Session: {upload_session}, "
-                f"User: {username}, File: {nama_file}, Size: {total_file_size} bytes"
+                f"✅ Upload initiated successfully - "
+                f"Task: {task_id}, Session: {upload_session}"
             )
-            # Jika AJAX/fetch, return JSON agar DataTable bisa reload tanpa reload halaman
+            
             if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return jsonify({'success': True, 'task_id': task_id, 'upload_session': upload_session}), 200
+                return jsonify({
+                    'success': True, 
+                    'task_id': task_id, 
+                    'upload_session': upload_session,
+                    'message': 'Upload started successfully'
+                }), 200
+            
             return redirect(url_for('upload_big_size_file'))
+        
         except Exception as e:
-            app.logger.error(f"❌ Error during upload: {e}")
-            import traceback
-            app.logger.error(traceback.format_exc())
+            app.logger.error(f"❌ Error during upload: {e}", exc_info=True)
+            
+            # Cleanup task progress if exists
             if 'task_id' in locals():
                 with task_progress_lock:
                     task_progress.pop(task_id, None)
                 mark_task_error(task_id)
             
-            flash(f'Error during upload: {str(e)}', 'error')
+            error_msg = f'Error during upload: {str(e)}'
+            
+            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({'success': False, 'error': error_msg}), 500
+            
+            flash(error_msg, 'error')
             return redirect(url_for('upload_big_size_file'))
-
+        
 cleanup_old_tasks()
 
 @app.route('/api/upload-data')
 def api_upload_data():
+    """
+    Endpoint untuk load data upload dengan:
+    - NO DUPLICATE rows
+    - Progress persistence
+    - Fast queries
+    
+    FIXES:
+    - Gunakan Set untuk track filenames yang sudah ditampilkan
+    - Skip database rows jika file sedang di-process
+    - Return task_id dalam response untuk frontend tracking
+    """
+    MAX_QUERY_TIMEOUT = 5
+    start_time = time.time()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
         # Get pagination parameters
         draw = int(request.args.get('draw', 1))
         start = int(request.args.get('start', 0))
         length = int(request.args.get('length', 10))
         search_value = request.args.get('search[value]', '')
-
-        # Order parameters
         order_column_index = int(request.args.get('order[0][column]', 2))
         order_direction = request.args.get('order[0][dir]', 'desc')
-
-        # Map column index to database column
+        
         column_map = {
             0: 'namaFileUpload',
             1: 'periodeData',
@@ -3646,175 +3811,286 @@ def api_upload_data():
         }
         order_column = column_map.get(order_column_index, 'uploadDate')
 
-        # Query DB
-        base_query = """
-            SELECT periodeData, namaFileUpload, uploadFolderPath, username, 
-                   fullname, uploadDate
-            FROM slik_uploader
-        """
-
-        # Add search filter if exists
-        where_clause = ""
-        params = []
-        if search_value:
-            where_clause = """ WHERE 
-                namaFileUpload LIKE ? OR 
-                periodeData LIKE ? OR 
-                username LIKE ? OR 
-                fullname LIKE ?
-            """
-            search_param = f'%{search_value}%'
-            params = [search_param, search_param, search_param, search_param]
-
-        # Get total count
-        count_query = f"SELECT COUNT(*) FROM slik_uploader {where_clause}"
-        cursor.execute(count_query, params)
-        total_records = cursor.fetchone()[0]
-
-        # Get filtered data with pagination (SQL Server syntax)
-        query = f"""
-            {base_query}
-            {where_clause}
-            ORDER BY {order_column} {order_direction.upper()}
-            OFFSET ? ROWS
-            FETCH NEXT ? ROWS ONLY
-        """
-        params_query = params.copy()
-        params_query.extend([start, length])
-
-        cursor.execute(query, params_query)
-        rows = cursor.fetchall()
-        columns = [col[0] for col in cursor.description]
-
-        data = []
-        # --- Data dari DB ---
-        for row in rows:
-            item = dict(zip(columns, row))
-            try:
-                upload_date_obj = parser.parse(str(item.get("uploadDate")))
-                upload_date = upload_date_obj.strftime("%d %B %Y, %H:%M")
-                upload_date_raw = item.get("uploadDate")
-            except:
-                upload_date = "N/A"
-                upload_date_raw = ""
-            progress = 100
-            status = 'completed'
-            search_key = f"{item.get('username')}_{item.get('namaFileUpload')}"
-            for tid, task_data in task_progress.items():
-                if task_data.get('key', '').startswith(search_key):
-                    progress = task_data.get('progress', 0)
-                    status = task_data.get('status', 'processing')
-                    break
-            if status == 'error':
-                progress_html = f"""
-                <div class=\"progress\" style=\"height:18px;\">
-                    <div class=\"progress-bar bg-danger\" role=\"progressbar\" style=\"width: 100%;\">
-                        Error
-                    </div>
-                </div>
-                """
-            else:
-                animated_class = 'progress-bar-animated' if progress < 100 else ''
-                progress_html = f"""
-                <div class=\"progress\" style=\"height:18px;\">
-                    <div class=\"progress-bar progress-bar-striped {animated_class}\" 
-                         role=\"progressbar\" style=\"width: {progress}%;\">
-                        {progress}%
-                    </div>
-                </div>
-                """
-            if progress == 100 and status != 'error':
-                download_html = f"""
-                <div class=\"btn-group\">
-                    <a href=\"{url_for('download_big_size', 
-                                      periodeData=item['periodeData'], 
-                                      username=item['username'], 
-                                      namaFileUpload=item['namaFileUpload'], 
-                                      uploadDate=str(upload_date_raw))}\" 
-                       class=\"btn btn-outline-success btn-sm\" title=\"Download Excel\">
-                        Excel <i class=\"fas fa-file-excel\"></i>
-                    </a>
-                    <a href=\"{url_for('download_upload_zip', 
-                                      periodeData=item['periodeData'], 
-                                      username=item['username'], 
-                                      namaFileUpload=item['namaFileUpload'], 
-                                      uploadDate=str(upload_date_raw))}\" 
-                       class=\"btn btn-outline-primary btn-sm\" title=\"Download ZIP\">
-                        ZIP <i class=\"fas fa-file-archive\"></i>
-                    </a>
-                </div>
-                """
-            elif status == 'error':
-                download_html = """
-                <button class=\"btn btn-danger btn-sm\" disabled>
-                    <i class=\"fas fa-exclamation-triangle\"></i> Error
-                </button>
-                """
-            else:
-                download_html = """
-                <button class=\"btn btn-secondary btn-sm\" disabled>
-                    <i class=\"fas fa-spinner fa-spin\"></i> Processing
-                </button>
-                """
-            data.append([
-                item['namaFileUpload'],
-                item['periodeData'],
-                upload_date,
-                progress_html,
-                download_html
-            ])
-
-        # --- Tambahkan data in-progress yang belum masuk DB ---
-        in_progress = []
-        with task_progress_lock:
-            for tid, v in task_progress.items():
-                if v.get('status', 'processing') == 'processing' and 'temp_metadata' in v:
-                    meta = v['temp_metadata']
-                    # Hindari duplikasi jika sudah ada di DB
-                    if not any(meta.get('namaFileUpload') == d[0] and meta.get('periodeData', '-') == d[1] for d in data):
-                        upload_date = datetime.now().strftime("%d %B %Y, %H:%M")
-                        progress = v.get('progress', 0)
-                        animated_class = 'progress-bar-animated' if progress < 100 else ''
-                        progress_html = f"""
-                        <div class=\"progress\" style=\"height:18px;\">
-                            <div class=\"progress-bar progress-bar-striped {animated_class}\" 
-                                 role=\"progressbar\" style=\"width: {progress}%;\">
-                                {progress}%
-                            </div>
+        in_progress_data = []
+        in_progress_filenames = set()  # Track filenames untuk avoid duplikat
+        in_progress_tasks = {}  # Track task details untuk frontend
+        
+        try:
+            with task_progress_lock:
+                # Get active tasks dari registry
+                active_task_ids = set()
+                with task_id_registry_lock:
+                    for tid, info in task_id_registry.items():
+                        if info.get('status') == 'active':
+                            active_task_ids.add(tid)
+                
+                # Collect progress untuk active tasks
+                snapshot = []
+                for tid in active_task_ids:
+                    if tid in task_progress:
+                        snapshot.append((tid, task_progress[tid].copy()))
+            
+            # Process snapshot
+            for tid, v in snapshot:
+                status = v.get('status', 'processing')
+                
+                if status == 'processing' and 'temp_metadata' in v:
+                    meta = v['temp_metadata'].copy()
+                    progress = int(v.get('progress', 0))
+                    upload_session = v.get('upload_session', '')
+                    message = v.get('message', '')
+                    
+                    filename = meta.get('namaFileUpload', '')
+                    
+                    # CRITICAL: Track filename untuk prevent duplikasi
+                    if filename:
+                        in_progress_filenames.add(filename)
+                    
+                    # CRITICAL: Store task info untuk frontend
+                    in_progress_tasks[tid] = {
+                        'filename': filename,
+                        'upload_session': upload_session,
+                        'progress': progress
+                    }
+                    
+                    # Generate HTML dengan task_id attribute
+                    animated_class = 'progress-bar-animated' if progress < 100 else ''
+                    progress_text = f"{progress}%"
+                    if message and progress < 100:
+                        progress_text = f"{progress}% - {message}"
+                    
+                    # PERBAIKAN: Gunakan format ID yang konsisten
+                    progress_bar_id = f"progress-bar-{tid}"
+                    
+                    progress_html = f'''
+                    <div class="progress" style="height:18px;">
+                        <div id="{progress_bar_id}" 
+                             class="progress-bar progress-bar-striped {animated_class}" 
+                             role="progressbar" 
+                             style="width: {progress}%;"
+                             data-task-id="{tid}"
+                             data-upload-session="{upload_session}"
+                             data-filename="{filename}">
+                            {progress_text}
                         </div>
-                        """
-                        download_html = """
-                        <button class=\"btn btn-secondary btn-sm\" disabled>
-                            <i class=\"fas fa-spinner fa-spin\"></i> Processing
-                        </button>
-                        """
-                        data.append([
-                            meta.get('namaFileUpload', '-'),
-                            meta.get('periodeData', '-'),
-                            upload_date,
-                            progress_html,
-                            download_html
-                        ])
-
-        cursor.close()
-        conn.close()
-
+                    </div>
+                    '''
+                    
+                    download_html = f'''
+                    <button id="download-btn-{tid}" 
+                            class="btn btn-secondary btn-sm" 
+                            data-task-id="{tid}"
+                            disabled>
+                        <i class="fas fa-spinner fa-spin"></i> {progress}%
+                    </button>
+                    '''
+                    
+                    in_progress_data.append([
+                        meta.get('namaFileUpload', '-'),
+                        meta.get('periodeData', '-'),
+                        meta.get('uploadDate', '-'),
+                        progress_html,
+                        download_html
+                    ])
+            
+            app.logger.info(
+                f"📊 Found {len(in_progress_data)} in-progress tasks: "
+                f"{list(in_progress_filenames)}"
+            )
+            
+        except Exception as cache_err:
+            app.logger.error(f"❌ Error collecting in-progress: {cache_err}")
+        
+        # Check timeout
+        elapsed = time.time() - start_time
+        if elapsed > MAX_QUERY_TIMEOUT * 0.2:
+            app.logger.warning(f"⏱️ Slow start, returning in-progress only")
+            return jsonify({
+                "draw": draw,
+                "recordsTotal": len(in_progress_data),
+                "recordsFiltered": len(in_progress_data),
+                "data": in_progress_data,
+                "inProgressTasks": list(in_progress_tasks.keys())  # Send task IDs
+            })
+        
+        conn = None
+        cursor = None
+        db_data = []
+        total_records = 0
+        
+        try:
+            conn = get_db_connection()
+            conn.timeout = MAX_QUERY_TIMEOUT
+            cursor = conn.cursor()
+            
+            base_query = """
+                SELECT periodeData, namaFileUpload, uploadFolderPath, username, 
+                       fullname, uploadDate
+                FROM slik_uploader WITH (NOLOCK)
+            """
+            
+            where_clause = ""
+            params = []
+            if search_value:
+                where_clause = """ WHERE 
+                    namaFileUpload LIKE ? OR 
+                    periodeData LIKE ? OR 
+                    username LIKE ? OR 
+                    fullname LIKE ?
+                """
+                search_param = f'%{search_value}%'
+                params = [search_param] * 4
+            
+            # Count
+            count_query = f"SELECT COUNT(*) FROM slik_uploader WITH (NOLOCK) {where_clause}"
+            cursor.execute(count_query, params)
+            total_records = cursor.fetchone()[0]
+            
+            # Check timeout
+            elapsed = time.time() - start_time
+            if elapsed > MAX_QUERY_TIMEOUT * 0.6:
+                raise TimeoutError(f"Query timeout: {elapsed:.2f}s")
+            
+            # Get data
+            query = f"""
+                {base_query}
+                {where_clause}
+                ORDER BY {order_column} {order_direction.upper()}
+                OFFSET ? ROWS
+                FETCH NEXT ? ROWS ONLY
+            """
+            params_query = params.copy()
+            params_query.extend([start, length])
+            
+            cursor.execute(query, params_query)
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+            
+            # Process rows dengan SKIP duplikasi
+            skipped_count = 0
+            for row in rows:
+                item = dict(zip(columns, row))
+                filename = item.get('namaFileUpload', '')
+                if filename in in_progress_filenames:
+                    skipped_count += 1
+                    app.logger.debug(
+                        f"⏭️ Skipping '{filename}' - already in progress"
+                    )
+                    continue
+                
+                # Parse date
+                try:
+                    upload_date_obj = parser.parse(str(item.get("uploadDate")))
+                    upload_date = upload_date_obj.strftime("%d %B %Y, %H:%M")
+                    upload_date_raw = item.get("uploadDate")
+                except:
+                    upload_date = "N/A"
+                    upload_date_raw = ""
+                
+                # HTML untuk completed items
+                progress_html = '''
+                <div class="progress" style="height:18px;">
+                    <div class="progress-bar" role="progressbar" style="width: 100%;">
+                        100%
+                    </div>
+                </div>
+                '''
+                
+                download_html = f'''
+                <div class="btn-group">
+                    <a href="{url_for('download_big_size', 
+                                      periodeData=item['periodeData'], 
+                                      username=item['username'], 
+                                      namaFileUpload=item['namaFileUpload'], 
+                                      uploadDate=str(upload_date_raw))}" 
+                       class="btn btn-outline-success btn-sm" title="Download Excel">
+                        Excel <i class="fas fa-file-excel"></i>
+                    </a>
+                    <a href="{url_for('download_upload_zip', 
+                                      periodeData=item['periodeData'], 
+                                      username=item['username'], 
+                                      namaFileUpload=item['namaFileUpload'], 
+                                      uploadDate=str(upload_date_raw))}" 
+                       class="btn btn-outline-primary btn-sm" title="Download ZIP">
+                        ZIP <i class="fas fa-file-archive"></i>
+                    </a>
+                </div>
+                '''
+                
+                db_data.append([
+                    item['namaFileUpload'],
+                    item['periodeData'],
+                    upload_date,
+                    progress_html,
+                    download_html
+                ])
+            
+            if skipped_count > 0:
+                app.logger.info(f"⏭️ Skipped {skipped_count} duplicate rows")
+        
+        except TimeoutError as te:
+            app.logger.warning(f"⏱️ Database timeout: {te}")
+            return jsonify({
+                "draw": draw,
+                "recordsTotal": len(in_progress_data),
+                "recordsFiltered": len(in_progress_data),
+                "data": in_progress_data,
+                "inProgressTasks": list(in_progress_tasks.keys()),
+                "warning": "Database timeout"
+            })
+        
+        except Exception as db_err:
+            app.logger.error(f"❌ Database error: {db_err}")
+            return jsonify({
+                "draw": draw,
+                "recordsTotal": len(in_progress_data),
+                "recordsFiltered": len(in_progress_data),
+                "data": in_progress_data,
+                "inProgressTasks": list(in_progress_tasks.keys()),
+                "error": "Database error"
+            })
+        
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+        
+        all_data = in_progress_data + db_data
+        
+        elapsed = time.time() - start_time
+        if elapsed > 2.0:
+            app.logger.warning(f"⚠️ API took {elapsed:.2f}s")
+        
+        app.logger.info(
+            f"✅ API response: {len(in_progress_data)} in-progress + "
+            f"{len(db_data)} completed = {len(all_data)} total"
+        )
+        
         return jsonify({
             "draw": draw,
-            "recordsTotal": total_records + len(data) - len(rows),
-            "recordsFiltered": total_records + len(data) - len(rows),
-            "data": data
+            "recordsTotal": total_records + len(in_progress_data),
+            "recordsFiltered": total_records + len(in_progress_data),
+            "data": all_data,
+            "inProgressTasks": list(in_progress_tasks.keys())  # CRITICAL untuk resume polling
         })
-        
+    
     except Exception as e:
+        app.logger.error(f"❌ Fatal error: {e}", exc_info=True)
         return jsonify({
-            "draw": int(request.args.get('draw', 1)),
+            "draw": draw if 'draw' in locals() else 1,
             "recordsTotal": 0,
             "recordsFiltered": 0,
             "data": [],
             "error": str(e)
         }), 500
-
+                
 @app.route('/download-big-size', methods=['GET'])
 def download_big_size():
     try:
