@@ -1197,34 +1197,37 @@ def create_user():
         is_valid, message = validate_password(password)
         if not is_valid:
             return jsonify({'success': False, 'message': message}), 400
-        
+
         # Hash password
         password_hash = bcrypt.generate_password_hash(password)
-        
+        # Convert bytes to string if needed
+        if isinstance(password_hash, bytes):
+            password_hash = password_hash.decode('utf-8')
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Check if username already exists
         cursor.execute("SELECT id FROM [dbo].[users] WHERE username = ?", (username,))
         if cursor.fetchone():
             cursor.close()
             conn.close()
             return jsonify({'success': False, 'message': 'Username already exists'}), 400
-        
+
         # Check if email already exists
         cursor.execute("SELECT id FROM [dbo].[users] WHERE email = ?", (email,))
         if cursor.fetchone():
             cursor.close()
             conn.close()
             return jsonify({'success': False, 'message': 'Email already exists'}), 400
-        
+
         # Insert new user
         query = """
-            INSERT INTO [dbo].[users] 
+            INSERT INTO [dbo].[users]
             (username, password_hash, fullname, email, role_access, report_access, created_date)
             VALUES (?, ?, ?, ?, ?, ?, GETDATE())
         """
-        
+
         cursor.execute(query, (username, password_hash, fullname, email, role_access, report_access))
         conn.commit()
         
@@ -1396,27 +1399,75 @@ def change_password(user_id):
         
         # Hash password
         password_hash = bcrypt.generate_password_hash(password)
-        
+        # Convert bytes to string if needed
+        if isinstance(password_hash, bytes):
+            password_hash = password_hash.decode('utf-8')
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Check if user exists
         cursor.execute("SELECT id FROM [dbo].[users] WHERE id = ?", (user_id,))
         if not cursor.fetchone():
             cursor.close()
             conn.close()
             return jsonify({'success': False, 'message': 'User not found'}), 404
-        
+
         # Update password
         query = "UPDATE [dbo].[users] SET password_hash = ? WHERE id = ?"
         cursor.execute(query, (password_hash, user_id))
         conn.commit()
-        
+
         cursor.close()
         conn.close()
-        
+
         return jsonify({'success': True, 'message': 'Password changed successfully'})
-    
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>/reset-password', methods=['POST'])
+def reset_password_user(user_id):
+    """Reset user password (admin functionality)"""
+    try:
+        data = request.get_json()
+
+        if 'password' not in data or not data['password']:
+            return jsonify({'success': False, 'message': 'Password is required'}), 400
+
+        password = data['password']
+
+        # Validate password
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return jsonify({'success': False, 'message': message}), 400
+
+        # Hash password
+        password_hash = bcrypt.generate_password_hash(password)
+        # Convert bytes to string if needed
+        if isinstance(password_hash, bytes):
+            password_hash = password_hash.decode('utf-8')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check if user exists
+        cursor.execute("SELECT id FROM [dbo].[users] WHERE id = ?", (user_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+
+        # Update password
+        query = "UPDATE [dbo].[users] SET password_hash = ? WHERE id = ?"
+        cursor.execute(query, (password_hash, user_id))
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({'success': True, 'message': 'Password reset successfully'})
+
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 

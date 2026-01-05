@@ -74,7 +74,7 @@
     <!-- Users Table Card -->
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white border-bottom py-2 py-sm-3">
-            <button type="button" class="btn btn-primary btn-sm btn-lg-lg shadow-sm w-100 w-sm-auto" onclick="showCreateModal()">
+            <button type="button" class="btn btn-primary btn-sm btn-lg-lg shadow-sm w-100 w-sm-auto" onclick="showCreateModal()" aria-label="Open dialog to create a new user">
                 <i class="bi bi-plus-circle me-1 me-sm-2"></i>Create New User
             </button>
         </div>
@@ -88,7 +88,6 @@
                             <th class="px-2 px-sm-3 px-lg-4 py-2 py-sm-3 text-muted fw-semibold small d-none d-lg-table-cell">Email</th>
                             <th class="px-2 px-sm-3 px-lg-4 py-2 py-sm-3 text-muted fw-semibold small">Role</th>
                             <th class="px-2 px-sm-3 px-lg-4 py-2 py-sm-3 text-muted fw-semibold small d-none d-xl-table-cell">Report Access</th>
-                            <th class="px-2 px-sm-3 px-lg-4 py-2 py-sm-3 text-muted fw-semibold small d-none d-xl-table-cell">Created Date</th>
                             <th class="px-2 px-sm-3 px-lg-4 py-2 py-sm-3 text-muted fw-semibold text-center small">Actions</th>
                         </tr>
                     </thead>
@@ -118,12 +117,12 @@
                     <div class="row g-2 g-sm-3">
                         <div class="col-12 col-md-6">
                             <label for="username" class="form-label fw-semibold small">
-                                <i class="bi bi-person-circle me-1"></i>Username 
+                                <i class="bi bi-person-circle me-1"></i>Username
                                 <span class="text-danger">*</span>
                             </label>
-                            <input type="text" class="form-control" id="username" name="username" 
-                                   placeholder="Enter username" required>
-                            <div class="form-text small">Username must be unique</div>
+                            <input type="text" class="form-control" id="username" name="username"
+                                   placeholder="Enter username" required aria-required="true" aria-describedby="usernameHelp">
+                            <div class="form-text small" id="usernameHelp">Username must be unique</div>
                         </div>
                         
                         <div class="col-12 col-md-6">
@@ -138,44 +137,50 @@
                     
                     <div class="mb-2 mb-sm-3">
                         <label for="email" class="form-label fw-semibold small">
-                            <i class="bi bi-envelope-fill me-1"></i>Email Address 
+                            <i class="bi bi-envelope-fill me-1"></i>Email Address
                             <span class="text-danger">*</span>
                         </label>
-                        <input type="email" class="form-control" id="email" name="email" 
-                               placeholder="user@example.com" required>
-                        <div class="form-text small">Email must be unique and valid</div>
+                        <input type="email" class="form-control" id="email" name="email"
+                               placeholder="user@example.com" required aria-required="true" aria-describedby="emailHelp">
+                        <div class="form-text small" id="emailHelp">Email must be unique and valid</div>
                     </div>
                     
                     <div class="row g-2 g-sm-3" id="passwordSection">
                         <div class="col-12 col-md-6" id="passwordGroup">
                             <label for="password" class="form-label fw-semibold small">
-                                <i class="bi bi-lock-fill me-1"></i>Password 
+                                <i class="bi bi-lock-fill me-1"></i>Password
                                 <span class="text-danger">*</span>
                             </label>
                             <div class="position-relative">
-                                <input type="password" class="form-control password-input" 
-                                       id="password" name="password" placeholder="Enter password">
-                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"></i>
+                                <input type="password" class="form-control password-input"
+                                       id="password" name="password" placeholder="Enter password"
+                                       aria-required="true" aria-describedby="passwordHelp">
+                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password', this)"
+                                   role="button" tabindex="0" aria-label="Toggle password visibility"
+                                   onkeypress="if(event.key==='Enter' || event.key===' ') togglePassword('password', this)"></i>
                             </div>
-                            <div class="password-requirements mt-2 p-2 bg-light rounded">
-                                <small class="d-block mb-1"><span id="lengthCheck" class="invalid">✖</span> Minimal 9 characters</small>
-                                <small class="d-block mb-1"><span id="capitalCheck" class="invalid">✖</span> Contains uppercase letter</small>
-                                <small class="d-block mb-1"><span id="numberCheck" class="invalid">✖</span> Contains number</small>
-                                <small class="d-block"><span id="specialCheck" class="invalid">✖</span> Contains special character (@$!%*?&)</small>
+                            <div class="password-requirements mt-2 p-2 bg-light rounded" id="passwordHelp" role="region" aria-live="polite" aria-label="Password requirements">
+                                <small class="d-block mb-1"><span id="lengthCheck" class="invalid" aria-label="Minimum 9 characters">✖</span> Minimal 9 characters</small>
+                                <small class="d-block mb-1"><span id="capitalCheck" class="invalid" aria-label="Contains uppercase letter">✖</span> Contains uppercase letter</small>
+                                <small class="d-block mb-1"><span id="numberCheck" class="invalid" aria-label="Contains number">✖</span> Contains number</small>
+                                <small class="d-block"><span id="specialCheck" class="invalid" aria-label="Contains special character">✖</span> Contains special character (@$!%*?&)</small>
                             </div>
                         </div>
                         
                         <div class="col-12 col-md-6" id="confirmPasswordGroup">
                             <label for="password_confirm" class="form-label fw-semibold small">
-                                <i class="bi bi-lock-fill me-1"></i>Confirm Password 
+                                <i class="bi bi-lock-fill me-1"></i>Confirm Password
                                 <span class="text-danger">*</span>
                             </label>
                             <div class="position-relative">
-                                <input type="password" class="form-control password-input" 
-                                       id="password_confirm" name="password_confirm" placeholder="Re-enter password">
-                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"></i>
+                                <input type="password" class="form-control password-input"
+                                       id="password_confirm" name="password_confirm" placeholder="Re-enter password"
+                                       aria-required="true" aria-describedby="matchCheck">
+                                <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('password_confirm', this)"
+                                   role="button" tabindex="0" aria-label="Toggle password visibility"
+                                   onkeypress="if(event.key==='Enter' || event.key===' ') togglePassword('password_confirm', this)"></i>
                             </div>
-                            <small id="matchCheck" class="text-danger" style="display:none;">
+                            <small id="matchCheck" class="text-danger" style="display:none;" role="alert">
                                 <i class="bi bi-exclamation-circle me-1"></i>Passwords do not match
                             </small>
                         </div>
@@ -184,10 +189,11 @@
                     <div class="row g-2 g-sm-3">
                         <div class="col-12 col-md-6">
                             <label for="role_access" class="form-label fw-semibold small">
-                                <i class="bi bi-shield-check me-1"></i>Role Access 
+                                <i class="bi bi-shield-check me-1"></i>Role Access
                                 <span class="text-danger">*</span>
                             </label>
-                            <select class="form-select" id="role_access" name="role_access" required>
+                            <select class="form-select" id="role_access" name="role_access" required
+                                    aria-required="true" aria-label="Select user role">
                                 <option value="">Select role...</option>
                                 <option value="user">User</option>
                                 <option value="admin">Admin</option>
@@ -196,10 +202,11 @@
 
                         <div class="col-12 col-md-6">
                             <label for="report_access" class="form-label fw-semibold small">
-                                <i class="bi bi-file-earmark-bar-graph me-1"></i>Report Access 
+                                <i class="bi bi-file-earmark-bar-graph me-1"></i>Report Access
                                 <span class="text-danger">*</span>
                             </label>
-                            <select class="form-select" id="report_access" name="report_access" required>
+                            <select class="form-select" id="report_access" name="report_access" required
+                                    aria-required="true" aria-label="Select report access level">
                                 <option value="">Select access level...</option>
                                 <option value="0">Upload Only</option>
                                 <option value="1">Report Only</option>
@@ -210,11 +217,87 @@
                 </form>
             </div>
             <div class="modal-footer border-top bg-light">
-                <button type="button" class="btn btn-secondary px-3 px-sm-4" data-bs-dismiss="modal">
+                <button type="button" class="btn btn-secondary px-3 px-sm-4" data-bs-dismiss="modal" aria-label="Close dialog without saving">
                     <i class="bi bi-x-circle me-1 me-sm-2"></i>Cancel
                 </button>
-                <button type="button" class="btn btn-primary px-3 px-sm-4" onclick="saveUser()">
+                <button type="button" class="btn btn-primary px-3 px-sm-4" onclick="saveUser()" aria-label="Save user information">
                     <i class="bi bi-check-circle me-1 me-sm-2"></i>Save User
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Reset Password -->
+<div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header border-bottom bg-light">
+                <div>
+                    <h5 class="modal-title fw-bold fs-5 fs-sm-4" id="resetPasswordModalLabel">Reset Password</h5>
+                    <p class="text-muted small mb-0">Enter a new password for the user</p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-3 p-sm-4">
+                <form id="resetPasswordForm">
+                    <input type="hidden" id="resetUserId" name="id">
+
+                    <div class="mb-3 mb-sm-4">
+                        <label for="resetUsername" class="form-label fw-semibold small">
+                            <i class="bi bi-person-circle me-1"></i>Username
+                        </label>
+                        <input type="text" class="form-control" id="resetUsername" name="resetUsername"
+                               placeholder="Username" disabled>
+                        <small class="text-muted">Username cannot be changed</small>
+                    </div>
+
+                    <div class="mb-2 mb-sm-3">
+                        <label for="resetPassword" class="form-label fw-semibold small">
+                            <i class="bi bi-lock-fill me-1"></i>New Password
+                            <span class="text-danger">*</span>
+                        </label>
+                        <div class="position-relative">
+                            <input type="password" class="form-control password-input"
+                                   id="resetPassword" name="resetPassword" placeholder="Enter new password"
+                                   aria-required="true" aria-describedby="resetPasswordHelp">
+                            <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('resetPassword', this)"
+                               role="button" tabindex="0" aria-label="Toggle password visibility"
+                               onkeypress="if(event.key==='Enter' || event.key===' ') togglePassword('resetPassword', this)"></i>
+                        </div>
+                        <div class="password-requirements mt-2 p-2 bg-light rounded" id="resetPasswordHelp" role="region" aria-live="polite" aria-label="Password requirements">
+                            <small class="d-block mb-1"><span id="resetLengthCheck" class="invalid" aria-label="Minimum 9 characters">✖</span> Minimal 9 characters</small>
+                            <small class="d-block mb-1"><span id="resetCapitalCheck" class="invalid" aria-label="Contains uppercase letter">✖</span> Contains uppercase letter</small>
+                            <small class="d-block mb-1"><span id="resetNumberCheck" class="invalid" aria-label="Contains number">✖</span> Contains number</small>
+                            <small class="d-block"><span id="resetSpecialCheck" class="invalid" aria-label="Contains special character">✖</span> Contains special character (@$!%*?&)</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-2 mb-sm-3">
+                        <label for="resetPasswordConfirm" class="form-label fw-semibold small">
+                            <i class="bi bi-lock-fill me-1"></i>Confirm Password
+                            <span class="text-danger">*</span>
+                        </label>
+                        <div class="position-relative">
+                            <input type="password" class="form-control password-input"
+                                   id="resetPasswordConfirm" name="resetPasswordConfirm" placeholder="Re-enter password"
+                                   aria-required="true" aria-describedby="resetMatchCheck">
+                            <i class="bi bi-eye-slash password-toggle" onclick="togglePassword('resetPasswordConfirm', this)"
+                               role="button" tabindex="0" aria-label="Toggle password visibility"
+                               onkeypress="if(event.key==='Enter' || event.key===' ') togglePassword('resetPasswordConfirm', this)"></i>
+                        </div>
+                        <small id="resetMatchCheck" class="text-danger" style="display:none;" role="alert">
+                            <i class="bi bi-exclamation-circle me-1"></i>Passwords do not match
+                        </small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-top bg-light">
+                <button type="button" class="btn btn-secondary px-3 px-sm-4" data-bs-dismiss="modal" aria-label="Close dialog without saving">
+                    <i class="bi bi-x-circle me-1 me-sm-2"></i>Cancel
+                </button>
+                <button type="button" class="btn btn-primary px-3 px-sm-4" onclick="saveResetPassword()" aria-label="Reset user password">
+                    <i class="bi bi-check-circle me-1 me-sm-2"></i>Save Changes
                 </button>
             </div>
         </div>
@@ -486,6 +569,21 @@
     var table;
     var isEditMode = false;
 
+    function getCsrfToken() {
+        const name = 'csrf_token=';
+        const decodedCookie = decodeURIComponent(document.cookie);
+        const cookieArray = decodedCookie.split(';');
+        for (let i = 0; i < cookieArray.length; i++) {
+            let cookie = cookieArray[i].trim();
+            if (cookie.indexOf(name) === 0) {
+                return cookie.substring(name.length);
+            }
+        }
+        // Fallback: check meta tag
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        return csrfMeta ? csrfMeta.getAttribute('content') : '';
+    }
+
     $(document).ready(function() {
         loadUsers();
     });
@@ -547,27 +645,23 @@
                         return data;
                     }
                 },
-                { 
-                    data: 'created_date',
-                    className: 'px-2 px-sm-3 px-lg-4 d-none d-xl-table-cell',
-                    render: function(data) {
-                        if (!data) return '<span class="text-muted">-</span>';
-                        return `<small class="text-muted">${new Date(data).toLocaleString('id-ID')}</small>`;
-                    }
-                },
                 {
                     data: null,
                     orderable: false,
                     className: 'action-buttons px-2 px-sm-3 px-lg-4 text-center',
                     render: function(data, type, row) {
                         return `
-                            <div class="btn-group" role="group">
-                                <button class="btn btn-sm btn-warning" onclick="editUser(${row.id})" 
-                                        title="Edit User">
+                            <div class="btn-group" role="group" aria-label="User actions">
+                                <button class="btn btn-sm btn-warning" data-user-id="${row.id}" onclick="editUser(this)"
+                                        title="Edit User" aria-label="Edit user ${row.username}">
                                     <i class="bi bi-pencil-square"></i>
                                 </button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteUser(${row.id}, '${row.username}')"
-                                        title="Delete User">
+                                <button class="btn btn-sm btn-info" data-user-id="${row.id}" data-user-name="${row.username}" onclick="resetPasswordUser(this)"
+                                        title="Reset Password" aria-label="Reset password for user ${row.username}">
+                                    <i class="bi bi-key-fill"></i>
+                                </button>
+                                <button class="btn btn-sm btn-danger" data-user-id="${row.id}" data-user-name="${row.username}" onclick="deleteUser(this)"
+                                        title="Delete User" aria-label="Delete user ${row.username}">
                                     <i class="bi bi-trash-fill"></i>
                                 </button>
                             </div>
@@ -619,18 +713,29 @@
         document.getElementById('password').required = true;
         document.getElementById('password_confirm').required = true;
         resetPasswordChecks();
-        
+
         var modal = new bootstrap.Modal(document.getElementById('userModal'));
         modal.show();
+
+        // Focus on first input for accessibility
+        setTimeout(() => document.getElementById('username').focus(), 500);
     }
 
-    function editUser(id) {
+    function editUser(button) {
         isEditMode = true;
+        const id = button.getAttribute('data-user-id');
         document.getElementById('userModalLabel').textContent = 'Edit User';
         document.getElementById('userModalSubtitle').textContent = 'Update user information';
-        
-        fetch(`/api/users/${id}`)
-            .then(response => response.json())
+
+        fetch(`/api/users/${id}`, {
+            headers: {
+                'X-CSRF-Token': getCsrfToken()
+            }
+        })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
             .then(data => {
                 document.getElementById('userId').value = data.id;
                 document.getElementById('username').value = data.username;
@@ -638,16 +743,20 @@
                 document.getElementById('email').value = data.email;
                 document.getElementById('role_access').value = data.role_access;
                 document.getElementById('report_access').value = data.report_access;
-                
+
                 document.getElementById('passwordSection').style.display = 'none';
                 document.getElementById('password').required = false;
                 document.getElementById('password_confirm').required = false;
-                
+
                 var modal = new bootstrap.Modal(document.getElementById('userModal'));
                 modal.show();
+
+                // Focus on first editable input for accessibility
+                setTimeout(() => document.getElementById('modal_fullname').focus(), 500);
             })
             .catch(error => {
-                showAlert('Error loading user data: ' + error, 'danger');
+                showAlert('Failed to load user data. Please try again.', 'danger');
+                console.error('Error:', error);
             });
     }
 
@@ -706,49 +815,157 @@
         fetch(url, {
             method: method,
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCsrfToken()
             },
             body: JSON.stringify(data)
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
         .then(data => {
             saveBtn.disabled = false;
             saveBtn.innerHTML = originalText;
-            
+
             if (data.success) {
                 showAlert(data.message, 'success');
                 bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
                 loadUsers();
             } else {
-                showAlert('Error: ' + data.message, 'danger');
+                showAlert(data.message || 'Failed to save user.', 'danger');
             }
         })
         .catch(error => {
             saveBtn.disabled = false;
             saveBtn.innerHTML = originalText;
-            showAlert('Error: ' + error, 'danger');
+            showAlert('Failed to save user. Please try again.', 'danger');
+            console.error('Error:', error);
         });
     }
 
-    function deleteUser(id, username) {
+    function deleteUser(button) {
+        const id = button.getAttribute('data-user-id');
+        const username = button.getAttribute('data-user-name');
+
         if (!confirm(`Are you sure you want to delete user "${username}"?\n\nThis action cannot be undone.`)) {
             return;
         }
 
         fetch(`/api/users/${id}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCsrfToken()
+            }
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 showAlert(data.message, 'success');
                 loadUsers();
             } else {
-                showAlert('Error: ' + data.message, 'danger');
+                showAlert(data.message || 'Failed to delete user.', 'danger');
             }
         })
         .catch(error => {
-            showAlert('Error: ' + error, 'danger');
+            showAlert('Failed to delete user. Please try again.', 'danger');
+            console.error('Error:', error);
+        });
+    }
+
+    function resetPasswordUser(button) {
+        const id = button.getAttribute('data-user-id');
+        const username = button.getAttribute('data-user-name');
+
+        // Reset form and display
+        document.getElementById('resetPasswordForm').reset();
+        document.getElementById('resetUserId').value = id;
+        document.getElementById('resetUsername').value = username;
+        document.getElementById('resetPassword').required = true;
+        document.getElementById('resetPasswordConfirm').required = true;
+        resetPasswordValidationChecks();
+
+        var modal = new bootstrap.Modal(document.getElementById('resetPasswordModal'));
+        modal.show();
+
+        // Focus on first input for accessibility
+        setTimeout(() => document.getElementById('resetPassword').focus(), 500);
+    }
+
+    function resetPasswordValidationChecks() {
+        ['resetLengthCheck', 'resetCapitalCheck', 'resetNumberCheck', 'resetSpecialCheck'].forEach(id => {
+            document.getElementById(id).className = 'invalid';
+            document.getElementById(id).innerHTML = '❌';
+        });
+    }
+
+    function saveResetPassword() {
+        var form = document.getElementById('resetPasswordForm');
+
+        if (!form.checkValidity()) {
+            form.classList.add('was-validated');
+            showAlert('Please fill in all required fields', 'warning');
+            return;
+        }
+
+        var userId = document.getElementById('resetUserId').value;
+        var password = document.getElementById('resetPassword').value;
+        var passwordConfirm = document.getElementById('resetPasswordConfirm').value;
+
+        // Validate password strength
+        if (!validatePasswordStrength(password)) {
+            showAlert('Password does not meet requirements', 'danger');
+            return;
+        }
+
+        // Check if passwords match
+        if (password !== passwordConfirm) {
+            showAlert('Passwords do not match', 'danger');
+            return;
+        }
+
+        var data = {
+            password: password
+        };
+
+        // Show loading state
+        const saveBtn = event.target;
+        const originalText = saveBtn.innerHTML;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+
+        fetch(`/api/users/${userId}/reset-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCsrfToken()
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalText;
+
+            if (data.success) {
+                showAlert(data.message, 'success');
+                bootstrap.Modal.getInstance(document.getElementById('resetPasswordModal')).hide();
+                loadUsers();
+            } else {
+                showAlert(data.message || 'Failed to reset password.', 'danger');
+            }
+        })
+        .catch(error => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalText;
+            showAlert('Failed to reset password. Please try again.', 'danger');
+            console.error('Error:', error);
         });
     }
 
@@ -794,6 +1011,36 @@
         var password = document.getElementById('password').value;
         var confirmPassword = this.value;
         var matchCheck = document.getElementById('matchCheck');
+
+        if (confirmPassword && password !== confirmPassword) {
+            matchCheck.style.display = 'block';
+        } else {
+            matchCheck.style.display = 'none';
+        }
+    });
+
+    // Reset password field validation
+    document.getElementById('resetPassword').addEventListener('input', function() {
+        var password = this.value;
+
+        var checks = {
+            resetLengthCheck: password.length >= 9,
+            resetCapitalCheck: /[A-Z]/.test(password),
+            resetNumberCheck: /\d/.test(password),
+            resetSpecialCheck: /[@$!%*?&]/.test(password)
+        };
+
+        Object.keys(checks).forEach(key => {
+            var element = document.getElementById(key);
+            element.className = checks[key] ? 'valid' : 'invalid';
+            element.innerHTML = checks[key] ? '✅' : '❌';
+        });
+    });
+
+    document.getElementById('resetPasswordConfirm').addEventListener('input', function() {
+        var password = document.getElementById('resetPassword').value;
+        var confirmPassword = this.value;
+        var matchCheck = document.getElementById('resetMatchCheck');
 
         if (confirmPassword && password !== confirmPassword) {
             matchCheck.style.display = 'block';
