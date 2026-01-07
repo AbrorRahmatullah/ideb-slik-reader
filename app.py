@@ -918,13 +918,6 @@ def download_upload_zip():
     username = session.get('username')
     namaFileUpload = request.args.get('namaFileUpload')
     uploadDate = request.args.get('uploadDate')
-    
-    print({
-        'periodeData':periodeData,
-        'uploadDate':uploadDate,
-        'username':username,
-        'namaFileUpload':namaFileUpload
-    })
 
     downloadType = "File Upload TXT"
     downloadDate = datetime.now()
@@ -951,8 +944,8 @@ def download_upload_zip():
         cursor.execute("""
             SELECT uploadFolderPath, namaFileUpload 
             FROM slik_uploader 
-            WHERE periodeData = ? AND username = ? AND namaFileUpload = ?
-        """, (periodeData, username, namaFileUpload))
+            WHERE periodeData = ? AND namaFileUpload = ?
+        """, (periodeData, namaFileUpload))
         
         result = cursor.fetchone()
         
@@ -988,72 +981,6 @@ def download_upload_zip():
             cursor.close()
         if 'conn' in locals():
             conn.close()
-
-# # Register route
-# @app.route('/register', methods=['GET', 'POST'])
-# def register():
-#     get_role_access = session.get('role_access')
-#     get_fullname = session.get('fullname')
-#     get_username = session.get('username')
-#     get_report_access = session.get('report_access')
-    
-#     if request.method == 'POST':
-#         username = request.form['username']
-#         password = request.form['password']
-#         password_confirm = request.form['password_confirm']
-#         role_access = request.form['role_access']
-#         fullname = request.form['fullname']
-#         email = request.form['email']
-#         report_access = request.form['report_access']
-        
-#         required_fields = ['username', 'password', 'password_confirm', 'role_access', 'fullname', 'email']
-#         data = {field: request.form[field] for field in required_fields}
-
-#         if not all(data.values()):
-#             return render_alert("Please fill the empty form!", 'register', username, fullname, email)
-
-#         if password != password_confirm:
-#             return render_alert("Passwords do not match.", 'register', username, fullname, email)
-        
-#         password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
-
-#         # Check if the username already exists
-#         conn = get_db_connection()
-#         cur = conn.cursor()
-#         cur.execute("SELECT * FROM users WHERE username = ?", (username,))
-#         existing_user = cur.fetchone()
-
-#         if existing_user:
-#             return render_alert("Username already exists.", 'register', username, fullname, email, role_access)
-        
-#         cur.execute("SELECT * FROM users WHERE email = ?", (email,))
-#         existing_email = cur.fetchone()
-
-#         if existing_email:
-#             return render_alert("Email is already registered.", 'register', username, fullname, email, role_access)
-
-#         else:
-#             # Insert new user into the database
-#             cur.execute("""
-#                 INSERT INTO users (username, password_hash, role_access, fullname, email, report_access, created_date)
-#                 VALUES (?, ?, ?, ?, ?, ?, GETDATE())
-#             """, (username, password_hash, role_access, fullname, email, report_access))
-#             conn.commit()
-#             return '''
-#                 <script>
-#                     alert("User registered successfully.");
-#                     window.location.href = "{}";
-#                 </script>
-#             '''.format(url_for('login'))
-
-
-#     return render_template(
-#         'register.html',
-#         role_access=get_role_access,
-#         fullname=get_fullname,
-#         username=get_username,
-#         report_access=get_report_access
-#     )
 
 @app.errorhandler(404)
 def not_found_error(error):
