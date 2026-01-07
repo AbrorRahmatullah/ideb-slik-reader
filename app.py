@@ -1106,7 +1106,7 @@ def create_user():
         # Validate required fields
         required_fields = ['username', 'password', 'fullname', 'email', 'role_access', 'report_access']
         for field in required_fields:
-            if field not in data or not data[field]:
+            if field not in data or data[field] == '' or data[field] is None:
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
         
         username = data['username']
